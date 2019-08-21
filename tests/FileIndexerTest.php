@@ -496,70 +496,37 @@ class FileIndexerTest extends TestCase
 
         // Test warning/removal of records in subdirectories that don't exist
         // anymore.
-        $this->doTestCheckIndexedRecordsInNonexistentSubdirs($base_dir, $indexer, $indexer_remove, $database_contents, 'aa/bb/cc', 'cc', 'aa/cc');
+        $database_contents = $this->doTestCheckIndexedRecordsInNonexistentSubdirs($base_dir, $indexer, $indexer_remove, $database_contents, 'aa/bb/cc', 'cc', 'aa/cc');
 
-        // Test warning/removal of an entry for a file that is now a directory
-        // with the same name. (checkIndexedRecordWithSameNameAsDir().)
-        unlink("$base_dir/AA");
-        rename("$base_dir/aa/cc", "$base_dir/AA");
-        // Let's reinitialize to see where we are after all the above changes.
-        $database_contents = [
-            ['', 'AA', 'da39a3ee5e6b4b0d3255bfef95601890afd80709'], // empty. Does not exist anymore.
-            ['', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi
-            ['AA', 'Aa', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi - this + next will now be reindexed.
-            ['AA', 'aa', '2aae6c35c94fcfb415dbe95f408b9ce91ee846ed'], // hello world
-            ['aa/cc', 'Aa', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi - this + next does not exist anymore.
-            ['aa/cc', 'aa', '2aae6c35c94fcfb415dbe95f408b9ce91ee846ed'], // hello world
-        ];
-        $this->indexAndAssert($indexer, [$base_dir], $database_contents, [
-            "warning: Indexed record exists for file 'AA', which actually matches a directory.",
-            // This one we expect because of the previous test, but we already tested:
-            "warning: Indexed records exist for files in the following nonexistent subdirectories of directory 'aa': cc.",
-            "info: Added 2 new file(s).",
-            "info: Skipped 1 already indexed file(s).",
-        ]);
-        // Remove the duplicate indexed item for nonexistent file.
-        unset($database_contents[0]);
-        unset($database_contents[4]);
-        unset($database_contents[5]);
-        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
-            "info: Removed indexed record for file 'AA' which actually matches a directory.",
-            "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory 'aa/cc'.",
-            "info: Skipped 3 already indexed file(s).",
-        ]);
-
-        // Test warning/removal of records within a (sub)directory which is now
-        // a file with the same name. (checkIndexedRecordsInNonexistentDir().)
-        // First move the directory out of the way; easier than removing.
-        rename("$base_dir/AA", "$base_dir/cc");
-        rename("$base_dir/AB", "$base_dir/AA");
-        // Reinitialize again
-        $database_contents = [
-            ['', 'AA', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi
-            ['', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi - moved to AA now.
-            ['AA', 'Aa', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi - moved now.
-            ['AA', 'aa', '2aae6c35c94fcfb415dbe95f408b9ce91ee846ed'], // hello world
-            ['cc', 'Aa', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi - this + next will now be reindexed.
-            ['cc', 'aa', '2aae6c35c94fcfb415dbe95f408b9ce91ee846ed'], // hello world
-        ];
-        // This sub-test needs subdirsCache filled, so we'll only find these
-        // records if we reindex the parent. NOTE - as mentioned above, this
-        // test also needs to index / find / remove stuff from $base_dir,
-        // because that properly tests the SQL query which fills subdirsCache.
-        $this->indexAndAssert($indexer, [$base_dir], $database_contents, [
-            "warning: Indexed records exist for the following nonexistent files in directory '': AB.",
-            "warning: Indexed records exist with 'AA' (which is a file) as nonexistent base directory.",
-            "info: Added 3 new file(s).",
-        ]);
-        // Remove the duplicate indexed items for nonexistent files.
+        // To unify results in the next test, remove AB first.
+        unlink("$base_dir/AB");
         unset($database_contents[1]);
-        unset($database_contents[2]);
-        unset($database_contents[3]);
         $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
             "info: Removed 1 indexed record(s) for nonexistent files in directory '': AB.",
-            "info: Removed 2 indexed record(s) with 'AA' (which is a file) as nonexistent base directory.",
             "info: Skipped 3 already indexed file(s).",
         ]);
+
+        // Test warning/removal of an entry for a file that is now a directory
+        // with the same name.
+        $old_file_new_dir = 'AA';
+        $old_dir = 'aa/cc';
+        $oldfile_hash = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
+        // We do test the directory structure a little bit extra, by having two
+        // files in there with the same name and different case:
+        $dirfile1_name = 'Aa';
+        $dirfile1_hash = 'c22b5f9178342609428d6f51b2c5af4c0bde6a42';
+        $dirfile2_name = 'aa';
+        $dirfile2_hash = '2aae6c35c94fcfb415dbe95f408b9ce91ee846ed';
+        $this->doTestCheckIndexedRecordWithSameNameAsDir($base_dir, $indexer, $indexer_remove, $old_file_new_dir, $old_dir, $oldfile_hash, $dirfile1_name, $dirfile1_hash, $dirfile2_name, $dirfile2_hash);
+
+        // Test warning/removal of records within a (sub)directory which is now
+        // a file with the same name.
+        $old_dir_new_file = 'AA';
+        $new_moved_dir = 'cc';
+        // $old_file doesn't even exist beforehand; gets copied after moving.
+        $old_file = 'cc/Aa';
+        $oldnewfile_hash = 'c22b5f9178342609428d6f51b2c5af4c0bde6a42';
+        $this->doTestCheckIndexedRecordsInNonexistentDir($base_dir, $indexer, $indexer_remove, $old_file, $old_dir_new_file, $new_moved_dir, $oldnewfile_hash, $dirfile1_name, $dirfile1_hash, $dirfile2_name, $dirfile2_hash);
 
         // Remove the directory after the test.
         $processor = new PathRemover($logger);
@@ -717,99 +684,63 @@ class FileIndexerTest extends TestCase
         $database_contents[] = ['aA/bB/cC', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42']; // hi
         $database_contents = $this->doTestCheckIndexedRecordsInNonexistentSubdirs($base_dir, $indexer, $indexer_remove, $database_contents, 'aA/bB/cC', 'cc', 'aA/cc', 'aA/bB/cC/AB', 'cc', 'bb');
 
-        // Rename directory back to 'aa' for consistency of further tests.
-        rename("$base_dir/aA", "$base_dir/aa");
-        $database_contents[3][0] = $database_contents[4][0] = 'aa/cc';
-        $this->indexAndAssert($indexer_reindex, ["$base_dir/aa"], $database_contents, [
-            "info: Updated 2 file(s).",
-        ]);
-        // Recreate record for empty file 'AA' because we need it again below.
-        // @todo that's unfortunate. Can we change the tests without impacting test surface?
-        $fp = fopen("$base_dir/AA", 'w');
-        fclose($fp);
-        array_unshift($database_contents, ['', 'AA', 'da39a3ee5e6b4b0d3255bfef95601890afd80709']);
-        $this->indexAndAssert($indexer, ["$base_dir/AA"], $database_contents, [
+        // Test warning/removal of an entry for a file that is now a directory
+        // with the same name. To give the test an extra edge, we'll make the
+        // file & directory have the same name except for case. Use 'AA' & 'aA'.
+        rename("$base_dir/AB", "$base_dir/AA");
+        // Set database up for the test / get messages out of the way.
+        $database_contents = [
+            ['', 'AA', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
+        ];
+        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
+            "warning: Directory '' contains entries for both AA and aA; these cannot both be indexed in a case insensitive database. Skipping the latter file.",
+            "info: Removed 1 indexed record(s) for nonexistent files in directory '': AB.",
+            "info: Removed 2 indexed record(s) with 'AA' (which is a file) as nonexistent base directory.",
             "info: Added 1 new file(s).",
         ]);
-        unlink("$base_dir/AA");
-
-        // Test warning/removal of an entry for a file that is now a directory
-        // with the same name. (checkIndexedRecordWithSameNameAsDir().)
-// Note that as a consequence of previous tests, directory 'aa' is still there
-// so we don't need to place something on top of 'AA' - those are equivalent.
-//        rename("$base_dir/aa/cc", "$base_dir/AA");
-        // Reindex dir 'aa' now that 'AA' doesn't prevent it.
-        $database_contents = [
-            ['', 'AA', 'da39a3ee5e6b4b0d3255bfef95601890afd80709'], // empty. Does not exist anymore .
-            ['', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi
-            ['aa/cc', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi - this now gets reindexed.
-            ['aa/cc', 'AX', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-        ];
-        $this->indexAndAssert($indexer, [$base_dir], $database_contents, [
-            "warning: Indexed record exists for file 'AA', which actually matches a directory.",
-//            // 'aa' was not indexed yet; not connected with this specific test:
-//            "info: Added 2 new file(s).",
-            "info: Skipped 3 already indexed file(s)."
-        ]);
-        // Remove the duplicate indexed item for nonexistent file.
-        unset($database_contents[0]);
-        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
-            "info: Removed indexed record for file 'AA' which actually matches a directory.",
-            "info: Skipped 3 already indexed file(s).",
-        ]);
+        $old_file_new_dir = 'AA';
+        $old_dir = 'aA/cc';
+        $oldfile_hash = 'c22b5f9178342609428d6f51b2c5af4c0bde6a42';
+        $dirfile1_name = 'AB';
+        $dirfile1_hash = 'c22b5f9178342609428d6f51b2c5af4c0bde6a42';
+        $dirfile2_name = 'AX';
+        $dirfile2_hash = 'c22b5f9178342609428d6f51b2c5af4c0bde6a42';
+        $this->doTestCheckIndexedRecordWithSameNameAsDir($base_dir, $indexer, $indexer_remove, $old_file_new_dir, $old_dir, $oldfile_hash, $dirfile1_name, $dirfile1_hash, $dirfile2_name, $dirfile2_hash);
 
         // Re-setup directories with varying casing for the next test like we
         // did for doTestCheckIndexedRecordsInNonexistentSubdirs() to
         // maximize test surface.
-        rename("$base_dir/aa/cc", "$base_dir/aa/cC");
-        rename("$base_dir/aa", "$base_dir/aA");
-        copy("$base_dir/AB", "$base_dir/aA/x0");
-        copy("$base_dir/AB", "$base_dir/aA/cC/x1");
-        $database_contents[4] = ['aA', 'x0', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'];
-        $database_contents[5] = ['aA/cC', 'x1', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'];
-        $this->indexAndAssert($indexer, ["$base_dir/aA/x0", "$base_dir/aA/cC/x1"], $database_contents, [
+        rename("$base_dir/aA/cc", "$base_dir/aA/cC");
+        rename("$base_dir/aA", "$base_dir/aa");
+        // Move 2 files and reindex them; keep records with old cases too.
+        rename("$base_dir/aa/cC/AB", "$base_dir/aa/x0");
+        rename("$base_dir/aa/cC/AX", "$base_dir/aa/cC/x1");
+        $database_contents = [
+            ['aa', 'x0', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // these 4 records are moved now
+            ['aA/cc', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
+            ['aA/cc', 'AX', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
+            ['aa/cC', 'x1', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
+        ];
+        $this->indexAndAssert($indexer, ["$base_dir/aa/x0", "$base_dir/aa/cC/x1"], $database_contents, [
             "info: Added 2 new file(s).",
         ]);
+
         // Test warning/removal of records within a (sub)directory which is now
-        // a file with the same name. (checkIndexedRecordsInNonexistentDir().)
-        // First move the directory out of the way; easier than removing,
-        // though we'll have more extra reindexed records to deal with.
-        rename("$base_dir/aA", "$base_dir/zz");
-        // Move re-cased file in the place of the directory, for even more test.
-        rename("$base_dir/AB", "$base_dir/AA");
-        // Reinitialize again
-        $database_contents = [
-            ['', 'AA', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi - will now be reindexed.
-            ['', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi - moved to AA now.
-            ['aA', 'x0', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // these 4 records are moved now
-            ['aa/cc', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-            ['aa/cc', 'AX', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-            ['aA/cC', 'x1', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
+        // a file with the same name.
+        $old_dir_new_file = 'aa';
+        $new_moved_dir = 'zz';
+        // $old_file doesn't even exist beforehand; gets copied after moving.
+        $old_file = 'zz/cC/x1';
+        $oldnewfile_hash = 'c22b5f9178342609428d6f51b2c5af4c0bde6a42';
+        $this->doTestCheckIndexedRecordsInNonexistentDir($base_dir, $indexer, $indexer_remove, $old_file, $old_dir_new_file, $new_moved_dir, $oldnewfile_hash, '', '', '', '', [
+            // Doesn't exist anymore
+            ['aA/cc', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
+            ['aA/cc', 'AX', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
+            // Will get moved / will have been moved. Note different cases.
+            ['aa', 'x0', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // these 4 records are moved now
+            ['aa/cC', 'x1', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
             ['zz', 'x0', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-            ['zz/cC', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-            ['zz/cC', 'AX', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
             ['zz/cC', 'x1', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-        ];
-        // This sub-test needs subdirsCache filled, so we'll only find these
-        // records if we reindex the parent. NOTE - as mentioned above, this
-        // test also needs to index / find / remove stuff from $base_dir,
-        // because that properly tests the SQL query which fills subdirsCache.
-        $this->indexAndAssert($indexer, [$base_dir], $database_contents, [
-            // First warning is just a side effect; we're testing for the 2nd.
-            "warning: Indexed records exist for the following nonexistent files in directory '': AB.",
-            "warning: Indexed records exist with 'AA' (which is a file) as nonexistent base directory.",
-            "info: Added 5 new file(s).",
-        ]);
-        // Remove the duplicate indexed items for nonexistent files.
-        unset($database_contents[1]);
-        unset($database_contents[2]);
-        unset($database_contents[3]);
-        unset($database_contents[4]);
-        unset($database_contents[5]);
-        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
-            "info: Removed 1 indexed record(s) for nonexistent files in directory '': AB.",
-            "info: Removed 4 indexed record(s) with 'AA' (which is a file) as nonexistent base directory.",
-            "info: Skipped 5 already indexed file(s).",
         ]);
 
         // Remove the directory after the test.
@@ -951,88 +882,52 @@ class FileIndexerTest extends TestCase
         $this->doTestCheckIndexedRecordsInNonexistentSubdirs($base_dir, $indexer, $indexer_remove, $database_contents, 'aA/bb/cc', 'cc', 'aa/cc','aA/bB/cC/AB', 'cC', 'bB');
 
         // Test warning/removal of an entry for a file that is now a directory
-        // with the same name. (checkIndexedRecordWithSameNameAsDir().)
-        rename("$base_dir/AB", "$base_dir/AX");
-        rename("$base_dir/aa/cc", "$base_dir/AB");
-        $database_contents = [
-            ['', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // Does not exist anymore .
-            ['', 'AX', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // Gets reindexed.
-            ['AB', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // Gets reindexed.
-            ['AB', 'Ax', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-            ['aa/cc', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // Does not exist anymore.
-            ['aa/cc', 'Ax', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-        ];
-        $this->indexAndAssert($indexer, [$base_dir], $database_contents, [
-            // Just a consequence of the renames; we're not testing this here.
-            "warning: Indexed records exist for files in the following nonexistent subdirectories of directory 'aa': cc.",
-            "warning: Indexed record exists for file 'AB', which actually matches a directory.",
-            // This too.
-            "info: Added 3 new file(s).",
-        ]);
-        // Remove the duplicate indexed item for nonexistent file.
-        unset($database_contents[0]);
-        unset($database_contents[4]);
-        unset($database_contents[5]);
-        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
-            "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory 'aa/cc'.",
-            "info: Removed indexed record for file 'AB' which actually matches a directory.",
-            "info: Skipped 3 already indexed file(s).",
-        ]);
+        // with the same name.
+        $old_file_new_dir = 'AB';
+        $old_dir = 'aa/cc';
+        $oldfile_hash = 'c22b5f9178342609428d6f51b2c5af4c0bde6a42';
+        $dirfile1_name = 'AB';
+        $dirfile1_hash = 'c22b5f9178342609428d6f51b2c5af4c0bde6a42';
+        $dirfile2_name = 'Ax';
+        $dirfile2_hash = 'c22b5f9178342609428d6f51b2c5af4c0bde6a42';
+        $this->doTestCheckIndexedRecordWithSameNameAsDir($base_dir, $indexer, $indexer_remove, $old_file_new_dir, $old_dir, $oldfile_hash, $dirfile1_name, $dirfile1_hash, $dirfile2_name, $dirfile2_hash);
 
         // Re-setup directories with varying casing for the next test like we
-        // did for the checkIndexedRecordsInNonexistentSubdirs() tests,
-        // to maximize test surface. (We won't test 2 different ones for root &
-        // subdir though; see previous comment at 2b.)
-        copy("$base_dir/AX", "$base_dir/aA/x0");
+        // did for doTestCheckIndexedRecordsInNonexistentSubdirs(), to
+        // maximize test surface.
         rename("$base_dir/AB", "$base_dir/aa/cc");
-        copy("$base_dir/AX", "$base_dir/aA/cC/x1");
-        $database_contents[4] = ['aA', 'x0', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'];
-        $database_contents[5] = ['aA/cC', 'x1', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'];
-        $this->indexAndAssert($indexer, ["$base_dir/aA/x0", "$base_dir/aA/cC/x1"], $database_contents, [
+        rename("$base_dir/aa/cc/Ax", "$base_dir/aa/x0");
+        $database_contents = [
+            ['aa', 'x0', $oldfile_hash],
+            ['aa/cc', 'AB', $oldfile_hash],
+        ];
+        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
+            "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory 'AB'.",
             "info: Added 2 new file(s).",
         ]);
-        // Test warning/removal of records within a (sub)directory which is now
-        // a file with the same name. (checkIndexedRecordsInNonexistentDir().)
-        // First move the directory out of the way; easier than removing,
-        // though we'll have more extra reindexed records to deal with.
-        rename("$base_dir/aA", "$base_dir/zz");
-        // Move re-cased file in the place of the directory, for even more test.
-        rename("$base_dir/AX", "$base_dir/AA");
-        // Reinitialize again
-        $database_contents = [
-            ['', 'AA', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi - will now be reindexed.
-            ['', 'AX', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi - moved to AA now.
-            ['AB', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // these 4 records are moved now
-            ['AB', 'Ax', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-            ['aA', 'x0', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'], // hi - moved to AA now.
-            ['aA/cC', 'x1', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-            ['zz', 'x0', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-            ['zz/cc', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-            ['zz/cc', 'Ax', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-            ['zz/cc', 'x1', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
-        ];
-        // This sub-test needs subdirsCache filled, so we'll only find these
-        // records if we reindex the parent. NOTE - as mentioned above, this
-        // test also needs to index / find / remove stuff from $base_dir,
-        // because that properly tests the SQL query which fills subdirsCache.
-        $this->indexAndAssert($indexer, [$base_dir], $database_contents, [
-            // First 2 warning are just side effects; we're testing for the 3rd.  <<< @TODO are both side effects? See if you can explain
-            "warning: Indexed records exist for the following nonexistent files in directory '': AX.",
-            "warning: Indexed records exist for files in the following nonexistent subdirectories of directory '': AB.",
-            "warning: Indexed records exist with 'AA' (which is a file) as nonexistent base directory.",
-            "info: Added 5 new file(s).",
+        rename("$base_dir/aa/x0", "$base_dir/aa/x00");
+        rename("$base_dir/aa/cc/AB", "$base_dir/aa/cc/x1");
+        $database_contents[] = ['aA', 'X00', $oldfile_hash];
+        $database_contents[] = ['aA/cC', 'x1', $oldfile_hash];
+        $this->indexAndAssert($indexer, ["$base_dir/aA/X00", "$base_dir/aA/cC/x1"], $database_contents, [
+            "info: Added 2 new file(s).",
         ]);
-        // Remove the duplicate indexed items for nonexistent files.
-        unset($database_contents[1]);
-        unset($database_contents[2]);
-        unset($database_contents[3]);
-        unset($database_contents[4]);
-        unset($database_contents[5]);
-        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
-            "info: Removed 1 indexed record(s) for nonexistent files in directory '': AX.",
-            "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory 'AB'.",
-            "info: Removed 2 indexed record(s) with 'AA' (which is a file) as nonexistent base directory.",
-            "info: Skipped 5 already indexed file(s).",
+
+        // Test warning/removal of records within a (sub)directory which is now
+        // a file with the same name.
+        $old_dir_new_file = 'aa';
+        $new_moved_dir = 'zz';
+        // $old_file doesn't even exist beforehand; gets copied after moving.
+        $old_file = 'zz/cc/x1';
+        $this->doTestCheckIndexedRecordsInNonexistentDir($base_dir, $indexer, $indexer_remove, $old_file, $old_dir_new_file, $new_moved_dir, $oldfile_hash, '', '', '', '', [
+            // Doesn't exist anymore
+            ['aa', 'x0', $oldfile_hash],
+            ['aa/cc', 'AB', $oldfile_hash],
+            // Will get moved / will have been moved. Note different cases.
+            ['aA', 'X00', $oldfile_hash],
+            ['aA/cC', 'x1', $oldfile_hash],
+            ['zz', 'x00', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
+            ['zz/cc', 'x1', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
         ]);
 
         // Remove the directory after the test.
@@ -1282,6 +1177,187 @@ class FileIndexerTest extends TestCase
         ]);
 
         return $database_contents;
+    }
+
+    /**
+     * Helper to test checkIndexedRecordsInNonexistentDir().
+     *
+     * That is: warning/removal of records within a (sub)directory which is now
+     * a file with the same name. Called from several tests, hence all the
+     * pesky abstraction.
+     *
+     * @param string $base_dir
+     * @param FileIndexer $indexer
+     * @param FileIndexer $indexer_remove
+     * @param string $old_file
+     * @param string $old_dir_new_file
+     * @param string $new_moved_dir
+     * @param string $oldnewfile_hash
+     * @param string $dirfile1_name
+     * @param string $dirfile1_hash
+     * @param string $dirfile2_name
+     * @param string $dirfile2_hash
+     * @param array $extra_indexed_records
+     *   Often used for records of files that are indexed (because they might
+     *   give some extra weight to the tests) but don't exist anymore (so they
+     *   don't get reindexed at $new_moved_dir).
+     *
+     */
+    private function doTestCheckIndexedRecordsInNonexistentDir($base_dir, $indexer, $indexer_remove, $old_file, $old_dir_new_file, $new_moved_dir, $oldnewfile_hash, $dirfile1_name, $dirfile1_hash, $dirfile2_name, $dirfile2_hash, array $extra_indexed_records = [])
+    {
+        // First move the directory out of the way; easier than removing.
+        rename("$base_dir/$old_dir_new_file", "$base_dir/$new_moved_dir");
+        // $old_file might not exist beforehand; can also be part of
+        // $new_moved_dir. Also, if we can have only one case indexed in the
+        // database, we'll change case of the new file for extra test surface.
+        $case_insensitive_db = !empty($indexer->getConfig('case_insensitive_database'));
+        $case_insensitive_fs = !empty($indexer->getConfig('case_insensitive_filesystem'));
+        $new_file = $old_dir_new_file;
+        if ($case_insensitive_fs || $case_insensitive_db) {
+            $new_file = strtoupper($new_file);
+            if ($new_file === $old_dir_new_file) {
+                // We want to test this, so $old_dir_new_file needs tweaking.
+                throw new RuntimeException("doTestCheckIndexedRecordWithSameNameAsDir conditions for sensitive fs / insensitive db seem to have changed. Please review.");
+            }
+        }
+        copy("$base_dir/$old_file", "$base_dir/$new_file");
+
+        // Compile database contents. This is complicated by the fact that some
+        // files in the old directory are mis-cased (on purpose, to give tests
+        // extra weight), so we can't just take $old_dir_new_file as directory.
+        // Also, sometimes $old_dir_new_file / $new_moved_dir is multi-level.
+        if ($dirfile1_name) {
+            $database_contents = [
+                // Moved here, so reindexed now, though that isn't tied to the test:
+                [$new_moved_dir, $dirfile1_name, $dirfile1_hash],
+                [$new_moved_dir, $dirfile2_name, $dirfile2_hash],
+                // Moved away; tested here:
+                [$old_dir_new_file, $dirfile1_name, $dirfile1_hash],
+                [$old_dir_new_file, $dirfile2_name, $dirfile2_hash],
+            ];
+        } else {
+            // Caller has to specify everything.
+            $database_contents = $extra_indexed_records;
+        }
+        $tmp_dir = dirname($new_file);
+        if ($tmp_dir === '.') {
+            $tmp_dir = '';
+        }
+        // File moved into the old directory position; reindexed:
+        $database_contents[] = [$tmp_dir, basename($new_file), $oldnewfile_hash];
+
+        // This sub-test needs subdirsCache filled, so we'll only find these
+        // records if we reindex the parent. NOTE - as mentioned at the
+        // checkIndexedRecordsInNonexistentDir() tests, we need to pass
+        // [$base_dir] as an argument because that properly tests the SQL query
+        // which fills subdirsCache. That isn't done elsewhere yet.
+        $this->indexAndAssert($indexer, [$base_dir], $database_contents, [
+            "warning: Indexed records exist with '$new_file' (which is a file) as nonexistent base directory.",
+            "info: Added 3 new file(s).",
+        ]);
+        // Remove the duplicate indexed items for nonexistent files.
+        if ($dirfile1_name) {
+            $database_contents = [
+                [$new_moved_dir, $dirfile1_name, $dirfile1_hash],
+                [$new_moved_dir, $dirfile2_name, $dirfile2_hash],
+            ];
+        } else {
+            $database_contents = array_filter($extra_indexed_records, function ($record) use ($new_moved_dir) {
+               return $record[0] === $new_moved_dir || strpos($record[0], "$new_moved_dir/") === 0;
+            });
+        }
+        $database_contents[] = [$tmp_dir, basename($new_file), $oldnewfile_hash];
+        $count = $extra_indexed_records ? count($extra_indexed_records) - 2 : 2;
+        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
+            "info: Removed $count indexed record(s) with '$new_file' (which is a file) as nonexistent base directory.",
+            "info: Skipped 3 already indexed file(s).",
+        ]);
+    }
+
+    /**
+     * Helper to test checkIndexedRecordWithSameNameAsDir().
+     *
+     * That is: warning/removal of an entry for a file that is now a directory
+     * with the same name. Called from several tests, hence all the pesky
+     * abstraction.
+     *
+     * @param string $base_dir
+     * @param FileIndexer $indexer
+     * @param FileIndexer $indexer_remove
+     * @param string $old_file_new_dir
+     * @param string $old_dir
+     * @param string $oldfile_hash
+     * @param string $dirfile1_name
+     * @param string $dirfile1_hash
+     * @param string $dirfile2_name
+     * @param string $dirfile2_hash
+     */
+    private function doTestCheckIndexedRecordWithSameNameAsDir($base_dir, $indexer, $indexer_remove, $old_file_new_dir, $old_dir, $oldfile_hash, $dirfile1_name, $dirfile1_hash, $dirfile2_name, $dirfile2_hash)
+    {
+        // Prep: move the file into the directory's place.
+        $old_file = $new_dir = $old_file_new_dir;
+        unlink("$base_dir/$old_file");
+        $rename = true;
+        $case_insensitive_db = !empty($indexer->getConfig('case_insensitive_database'));
+        $case_insensitive_fs = !empty($indexer->getConfig('case_insensitive_filesystem'));
+        if (!$case_insensitive_fs && $case_insensitive_db) {
+            // If the base dirname of the file is the same os the old directory
+            // (base) except for case, then one of them is not indexed. We
+            // assume the old directory is not indexed (because otherwise we
+            // wouldn't be able to test what we want to test here), so that
+            // influences our test results below.
+            $tmp_file = strtolower("$old_file_new_dir/");
+            $tmp_dir = strtolower("$old_dir/");
+            if (strpos($tmp_file, $tmp_dir) === 0 || strpos($tmp_dir, $tmp_file) === 0) {
+                // Also, we will not move (re-case) the old directory, to give
+                // some extra edge to our test on sensitive fs / insensitive db.
+                $rename = false;
+                $new_dir = $old_dir;
+            } else {
+                // We want to test the above.
+                throw new RuntimeException("doTestCheckIndexedRecordWithSameNameAsDir conditions for sensitive fs and insensitive db seem to have changed. Please review.");
+            }
+        }
+        if ($rename) {
+            rename("$base_dir/$old_dir", "$base_dir/$new_dir");
+        }
+
+        $database_contents = [
+            ['', $old_file, $oldfile_hash], // empty. Does not exist anymore.
+            [$new_dir, $dirfile1_name, $dirfile1_hash], // This + next will now be reindexed.
+            [$new_dir, $dirfile2_name, $dirfile2_hash],
+        ];
+        if ($new_dir !== $old_dir) {
+            $database_contents[] = [$old_dir, $dirfile1_name, $dirfile1_hash]; // This + next does not exist anymore.
+            $database_contents[] = [$old_dir, $dirfile2_name, $dirfile2_hash];
+        }
+        $logs = [
+            "warning: Indexed record exists for file '$old_file_new_dir', which actually matches a directory.",
+            "info: Added 2 new file(s).",
+        ];
+        if ($rename) {
+            // This one is there because of previous state, we just put up with it.
+            // The location unfortunately depends on $old_file_new_dir vs 'aa'.
+            $tmp_dir = dirname($old_dir);
+            $tmp_file = basename($old_dir);
+            $unimportant_log = "warning: Indexed records exist for files in the following nonexistent subdirectories of directory '$tmp_dir': $tmp_file.";
+            array_splice($logs, $old_file_new_dir === 'AA' ? 1 : 0, 0, [$unimportant_log]);
+        }
+        $this->indexAndAssert($indexer, [$base_dir], $database_contents, $logs);
+
+        // Remove the duplicate indexed item for nonexistent file.
+        unset($database_contents[0]);
+        unset($database_contents[3]);
+        unset($database_contents[4]);
+        $logs = [
+            "info: Removed indexed record for file '$old_file_new_dir' which actually matches a directory.",
+            "info: Skipped 2 already indexed file(s).",
+        ];
+        if ($rename) {
+            $unimportant_log = "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory '$old_dir'.";
+            array_splice($logs, $old_file_new_dir === 'AA' ? 1 : 0, 0, [$unimportant_log]);
+        }
+        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, $logs);
     }
 
     //@todo the actual sensitive db + insensitive fs test: get 2 equivalent rows into the db somehow.
