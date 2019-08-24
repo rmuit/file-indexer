@@ -25,12 +25,12 @@ class PathProcessor
     /**
      * Configuration values.
      *
-     * If we want behavior to be configurable, we'll just refer to a key inside
-     * this array. We won't do much about populating it though, so
-     * - there is no getter / option for a default value (yet?), so it's up to
-     *   the code to check if things are set or up to the constructor to always
-     *   populate a value.
-     * - there are just defaults for certain behavior spead around the code.
+     * There's a getter for access by outside code, or as a 'shorthand' for
+     * when you're not sure if the value is set... but it's perfectly allowed
+     * to read/write directly to this variable from within the (child) class.
+     * There is no support for a default value (yet?), so it's up to the code
+     * to check if things are set or up to the constructor to always populate a
+     * value. So for some behavior, 'defaults' are just spread around the code.
      *
      * To see what configuration options are available, check the code. (Often
      * they are mentioned in the constructor.)
@@ -44,8 +44,8 @@ class PathProcessor
      *
      * For classes to put any value here that they need to remember. There's a
      * getter for access by outside code, or as a 'shorthand' for when you're
-     * not sure if the state value exists, or you need a default... but it's
-     * perfectly allowed to read/write directly to this variable from a class.
+     * not sure if the value is set... but it's perfectly allowed to read/write
+     * directly to this variable from within the (child) class.
      *
      * @var array
      */
@@ -94,19 +94,39 @@ class PathProcessor
     }
 
     /**
-     * Returns a state value.
+     * Returns a configuration value.
+     *
+     * Classes don't need to use this / may also reference and manipulate
+     * $config directly; this is for outside code to check configuration
+     * values. There is no setter.
      *
      * @param string $name
-     *   The name of the state value.
-     * @param mixed $default
-     *   (Optional) default value to return if the value is not set.
+     *   The name of the configuration option.
      *
      * @return mixed
-     *   The corresponding state value.
+     *   The corresponding configuration value, or NULL if not set.
      */
-    public function getState($name, $default = null)
+    public function getConfig($name)
     {
-        return isset($this->state[$name]) ? $this->state[$name] : $default;
+        return isset($this->config[$name]) ? $this->config[$name] : NULL;
+    }
+
+    /**
+     * Returns a state value.
+     *
+     * Classes don't need to use this / may also reference and manipulate
+     * $state directly; this is for outside code to check state values. There
+     * is no setter.
+     *
+     * @param string $name
+     *   The name/key corresponding to the state value.
+     *
+     * @return mixed
+     *   The corresponding state value, or NULL if not set.
+     */
+    public function getState($name)
+    {
+        return isset($this->state[$name]) ? $this->state[$name] : NULL;
     }
 
     /**
