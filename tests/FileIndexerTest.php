@@ -484,29 +484,15 @@ class FileIndexerTest extends TestCase
         // Change a file's contents and then reindex it.
         $database_contents = $this->doTestReindexContents($base_dir, $indexer, $indexer_reindex, $database_contents, 'aa/bb/cc/AA', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42', 1);
 
-        // Move a file around. This is the same as removing and adding a file;
-        // FileIndexer doesn't have rename detection. With a case sensitive
-        // file system, re-casing a file should 'move' it - and in combination
+        // Test warning/removal of records for files missing in a directory. We
+        // 're-case' the file here for extra test surface. With a case
+        // sensitive file system, this should 'move' the file - and combined
         // with a case sensitive database, this should be reflected in the db.
-        // (Also implicitly test: the directory which is stored, should not be
-        // influenced by the value passed to processPaths() / starting from a
-        // subdirectory. Though that's obvious.)
-        rename("$base_dir/aa/bb/cc/AA", "$base_dir/aa/bb/cc/Aa");
-        $database_contents[] = ['aa/bb/cc', 'Aa', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'];
-        // File should be added as extra file; existing record is not removed
-        // but a warning is logged (checkIndexedRecordsNonexistentInDir()).
-        $this->indexAndAssert($indexer, ["$base_dir/aa/bb"], $database_contents, [
-            "warning: Indexed records exist for the following nonexistent files in directory 'aa/bb/cc': AA.",
-            "info: Added 1 new file(s).",
-            // Only 'aa' gets found and skipped.
-            "info: Skipped 1 already indexed file(s).",
-        ]);
-        unset($database_contents[2]);
-        // Remove 'AA' now.
-        $this->indexAndAssert($indexer_remove, ["$base_dir/aa/bb"], $database_contents, [
-            "info: Removed 1 indexed record(s) for nonexistent files in directory 'aa/bb/cc': AA.",
-            "info: Skipped 2 already indexed file(s).",
-        ]);
+        // (Can't be done if either file system or database is case sensitive.)
+        $database_contents = $this->doTestCheckIndexedRecordsNonexistentInDir($base_dir, $indexer, $indexer_remove, $database_contents, 'aa/bb/cc/AA', 'Aa', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42',
+            // 'aa' gets found and skipped.
+            'info: Skipped 1 already indexed file(s).'
+        );
 
         // Test warning/removal of records in subdirectories that don't exist
         // anymore. (checkIndexedRecordsInNonexistentSubdirs().)
@@ -736,25 +722,8 @@ class FileIndexerTest extends TestCase
         // Change a file's contents and then reindex it.
         $database_contents = $this->doTestReindexContents($base_dir, $indexer, $indexer_reindex, $database_contents, 'aa/bb/cc/AA', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42', 1);
 
-        // Move a file around. This is the same as removing and adding a file;
-        // FileIndexer doesn't have rename detection. (Also implicitly test:
-        // the directory which is stored, should not be influenced by the value
-        // passed to processPaths() / starting from a subdirectory. Though
-        // that's obvious.)
-        rename("$base_dir/aa/bb/cc/AA", "$base_dir/aa/bb/cc/Ax");
-        $database_contents[] = ['aa/bb/cc', 'Ax', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'];
-        // File should be added as extra file; existing record is not removed
-        // but a warning is logged (checkIndexedRecordsNonexistentInDir()).
-        $this->indexAndAssert($indexer, ["$base_dir/aa/bb"], $database_contents, [
-            "warning: Indexed records exist for the following nonexistent files in directory 'aa/bb/cc': AA.",
-            "info: Added 1 new file(s).",
-        ]);
-        unset($database_contents[2]);
-        // Remove 'AA' now.
-        $this->indexAndAssert($indexer_remove, ["$base_dir/aa/bb"], $database_contents, [
-            "info: Removed 1 indexed record(s) for nonexistent files in directory 'aa/bb/cc': AA.",
-            "info: Skipped 1 already indexed file(s).",
-        ]);
+        // Test warning/removal of records for files missing in a directory.
+        $database_contents = $this->doTestCheckIndexedRecordsNonexistentInDir($base_dir, $indexer, $indexer_remove, $database_contents, 'aa/bb/cc/AA', 'Ax', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42');
 
         // Rename a file to a different case.
         rename("$base_dir/aa/bb/cc/Ax", "$base_dir/aa/bb/cc/AX");
@@ -1057,25 +1026,8 @@ class FileIndexerTest extends TestCase
         // Change a file's contents and then reindex it.
         $database_contents = $this->doTestReindexContents($base_dir, $indexer, $indexer_reindex, $database_contents, 'aa/bb/cc/AA', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42', 0, false);
 
-        // Move a file around. This is the same as removing and adding a file;
-        // FileIndexer doesn't have rename detection. (Also implicitly test:
-        // the directory which is stored, should not be influenced by the value
-        // passed to processPaths() / starting from a subdirectory. Though
-        // that's obvious.)
-        rename("$base_dir/aa/bb/cc/Aa", "$base_dir/aa/bb/cc/Ax");
-        $database_contents[] = ['aa/bb/cc', 'Ax', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'];
-        // File should be added as extra file; existing record is not removed
-        // but a warning is logged (checkIndexedRecordsNonexistentInDir()).
-        $this->indexAndAssert($indexer, ["$base_dir/aa/bb"], $database_contents, [
-            "warning: Indexed records exist for the following nonexistent files in directory 'aa/bb/cc': Aa.",
-            "info: Added 1 new file(s).",
-        ]);
-        unset($database_contents[1]);
-        // Remove 'Aa' now.
-        $this->indexAndAssert($indexer_remove, ["$base_dir/aa/bb"], $database_contents, [
-            "info: Removed 1 indexed record(s) for nonexistent files in directory 'aa/bb/cc': Aa.",
-            "info: Skipped 1 already indexed file(s).",
-        ]);
+        // Test warning/removal of records for files missing in a directory.
+        $database_contents = $this->doTestCheckIndexedRecordsNonexistentInDir($base_dir, $indexer, $indexer_remove, $database_contents, 'aa/bb/cc/Aa', 'Ax', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42');
 
 
         // Test warning/removal of records in subdirectories that don't exist
@@ -1276,6 +1228,68 @@ class FileIndexerTest extends TestCase
             $logs[] = 'info: Reindexed 1 file(s) which were already indexed and equal.';
         }
         $this->indexAndAssert($indexer_reindex, $reindex_files, $database_contents, $logs);
+
+        return $database_contents;
+    }
+
+    /**
+     * Helper to test checkIndexedRecordsNonexistentInDir().
+     *
+     * That is: warning/removal of records for files missing in a directory.
+     *
+     * @param string $base_dir
+     * @param FileIndexer $indexer
+     * @param FileIndexer $indexer_remove
+     * @param array[] $database_contents
+     * @param string $old_file
+     *   File to move; path relative to basedir.
+     * @param string $moved_file
+     *   Filename to move to (in the same directory); only filename.
+     * @param string $file_hash
+     * @param string $extra_log
+     *
+     * @return array[]
+     *   The modified database contents.
+     */
+    private function doTestCheckIndexedRecordsNonexistentInDir($base_dir, $indexer, $indexer_remove, $database_contents, $old_file, $moved_file, $file_hash, $extra_log = '')
+    {
+        // For some assumptions below, it's important that the file is moved
+        // within the same directory.
+        $test_dir = dirname($old_file);
+        $old_file = basename($old_file);
+
+        // Move a file around. This is the same as removing and adding a file;
+        // FileIndexer doesn't have rename detection.
+        rename("$base_dir/$test_dir/$old_file", "$base_dir/$test_dir/$moved_file");
+        $database_contents[] = [$test_dir, $moved_file, $file_hash];
+        // Also implicitly test: the directory which is stored, should not be
+        // influenced by the value passed to processPaths() / starting from a
+        // subdirectory. That's obvious, but still: we're starting from the
+        // parent directory for the heck of it.
+        $reindex_dir = dirname($test_dir);
+        // File should be added as extra file; existing record is not removed
+        // but a warning is logged (checkIndexedRecordsNonexistentInDir()).
+        $logs = [
+            "warning: Indexed records exist for the following nonexistent files in directory '$test_dir': $old_file.",
+            "info: Added 1 new file(s).",
+        ];
+        if ($extra_log) {
+            $logs[] = $extra_log;
+        }
+        $this->indexAndAssert($indexer, ["$base_dir/$reindex_dir"], $database_contents, $logs);
+
+        // Now remove the record.
+        $database_contents = array_filter($database_contents, function ($element) use ($test_dir, $old_file, $file_hash) {
+            return $element !== [$test_dir, $old_file, $file_hash];
+        });
+        $skip = array_filter($database_contents, function ($record) use ($reindex_dir) {
+           return $record[0] === $reindex_dir || strpos($record[0], "$reindex_dir/") === 0;
+        });
+        $skipped = count($skip);
+        $this->indexAndAssert($indexer_remove, ["$base_dir/$reindex_dir"], $database_contents, [
+            "info: Removed 1 indexed record(s) for nonexistent files in directory '$test_dir': $old_file.",
+            "info: Skipped $skipped already indexed file(s).",
+        ]);
 
         return $database_contents;
     }
