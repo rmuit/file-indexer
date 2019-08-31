@@ -481,21 +481,8 @@ class FileIndexerTest extends TestCase
         // Remove the symlink; it will just cause noise in logs from now on.
         unlink("$base_dir/aa/BB");
 
-        // Change a file and then reindex it. (There is no difference here in
-        // whether it's a singular file or part of a directory; all that logic
-        // is in processFile().)
-        copy("$base_dir/aa/bb/cc/AA", "$base_dir/AB");
-        // This will not change anything.
-        $this->indexAndAssert($indexer, ["$base_dir/AB"], $database_contents, [
-            "info: Skipped 1 already indexed file(s).",
-        ]);
-        // We need to pass 'reindex_all' for this to have effect. Also verify
-        // message for 'equal' files.
-        $database_contents[1][2] = 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'; // hi
-        $this->indexAndAssert($indexer_reindex, ["$base_dir/AA", "$base_dir/AB"], $database_contents, [
-            "info: Updated 1 file(s).",
-            "info: Reindexed 1 file(s) which were already indexed and equal.",
-        ]);
+        // Change a file's contents and then reindex it.
+        $database_contents = $this->doTestReindexContents($base_dir, $indexer, $indexer_reindex, $database_contents, 'aa/bb/cc/AA', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42', 1);
 
         // Move a file around. This is the same as removing and adding a file;
         // FileIndexer doesn't have rename detection. With a case sensitive
@@ -685,8 +672,9 @@ class FileIndexerTest extends TestCase
             "info: Added 2 new file(s).",
             "info: Skipped 1 symlink(s).",
         ]);
-
+        // Remove the symlink; it will just cause noise in logs from now on.
         unlink("$base_dir/aa/BB");
+
         // Reindex the same directory, to see if anything changes now that the
         // database has contents. (This also tests if files in the 'root'
         // directory can be read back from the DB; conceivably, a DB system
@@ -745,21 +733,8 @@ class FileIndexerTest extends TestCase
         // (We still have file /AA vs dir /aa; maybe remove later.)
         unlink("$base_dir/aa/bb/cc/aa");
 
-        // Change a file's contents and then reindex it. (There is no
-        // difference here in whether it's a singular file or part of a
-        // directory; all that logic is in processFile().)
-        copy("$base_dir/aa/bb/cc/AA", "$base_dir/AB");
-        // This will not change anything.
-        $this->indexAndAssert($indexer, ["$base_dir/AB"], $database_contents, [
-            "info: Skipped 1 already indexed file(s).",
-        ]);
-        // We need to pass 'reindex_all' for this to have effect. Also verify
-        // message for 'equal' files.
-        $database_contents[1][2] = 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'; // hi
-        $this->indexAndAssert($indexer_reindex, ["$base_dir/AA", "$base_dir/AB"], $database_contents, [
-            "info: Updated 1 file(s).",
-            "info: Reindexed 1 file(s) which were already indexed and equal.",
-        ]);
+        // Change a file's contents and then reindex it.
+        $database_contents = $this->doTestReindexContents($base_dir, $indexer, $indexer_reindex, $database_contents, 'aa/bb/cc/AA', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42', 1);
 
         // Move a file around. This is the same as removing and adding a file;
         // FileIndexer doesn't have rename detection. (Also implicitly test:
@@ -1013,7 +988,7 @@ class FileIndexerTest extends TestCase
             "info: Added 2 new file(s).",
             "info: Skipped 1 symlink(s).",
         ]);
-        // End symlink tests.
+        // Remove the symlink; it will just cause noise in logs from now on.
         unlink("$base_dir/aa/BX");
 
         // Reindex the same directory, to see if anything changes now that the
@@ -1079,19 +1054,8 @@ class FileIndexerTest extends TestCase
             "info: Updated 1 file(s).",
         ]);
 
-        // Change a file's contents and then reindex it. (There is no
-        // difference here in whether it's a singular file or part of a
-        // directory; all that logic is in processFile().)
-        copy("$base_dir/aa/bb/cc/AA", "$base_dir/AB");
-        // This will not change anything.
-        $this->indexAndAssert($indexer, ["$base_dir/AB"], $database_contents, [
-            "info: Skipped 1 already indexed file(s).",
-        ]);
-        // We need to pass 'reindex_all' for this to have effect.
-        $database_contents[0][2] = 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'; // hi
-        $this->indexAndAssert($indexer_reindex, ["$base_dir/AB"], $database_contents, [
-            "info: Updated 1 file(s).",
-        ]);
+        // Change a file's contents and then reindex it.
+        $database_contents = $this->doTestReindexContents($base_dir, $indexer, $indexer_reindex, $database_contents, 'aa/bb/cc/AA', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42', 0, false);
 
         // Move a file around. This is the same as removing and adding a file;
         // FileIndexer doesn't have rename detection. (Also implicitly test:
@@ -1270,6 +1234,50 @@ class FileIndexerTest extends TestCase
         // Remove the directory after the test.
         $processor = new PathRemover($logger);
         $processor->processPaths([$base_dir]);
+    }
+
+    /**
+     * Helper to test reindexing contents and other things.
+     *
+     * @param string $base_dir
+     * @param FileIndexer $indexer
+     * @param FileIndexer $indexer_reindex
+     * @param array[] $database_contents
+     * @param $copy_from
+     * @param $copy_to
+     * @param $new_hash
+     * @param int $index_in_contents
+     *   Index of the file we're changing in the database contents. We can
+     *   derive this instead of havind a parameter, but I'm lazy / it just
+     *   creates more code, and code readability is already questionable.
+     * @param bool $test_reindex_message
+     *   (Optional) if true / by default, do extra unrelated test.
+     *
+     * @return array[]
+     *   The modified database contents.
+     */
+    function doTestReindexContents($base_dir, $indexer, $indexer_reindex, $database_contents, $copy_from, $copy_to, $new_hash, $index_in_contents, $test_reindex_message = true)
+    {
+        // Change a file's contents and then reindex it - by copying. (There is
+        // no difference here in whether it's a singular file or part of a
+        // directory; all the tested logic is in processFile().)
+        copy("$base_dir/$copy_from", "$base_dir/$copy_to");
+        // This will not change anything.
+        $this->indexAndAssert($indexer, ["$base_dir/$copy_to"], $database_contents, [
+            "info: Skipped 1 already indexed file(s).",
+        ]);
+        // We need to pass 'reindex_all' for this to have effect. Also verify
+        // message for 'equal' files.
+        $database_contents[$index_in_contents][2] = $new_hash;
+        $reindex_files = ["$base_dir/$copy_to"];
+        $logs = ["info: Updated 1 file(s)."];
+        if ($test_reindex_message) {
+            $reindex_files[] = "$base_dir/$copy_from";
+            $logs[] = 'info: Reindexed 1 file(s) which were already indexed and equal.';
+        }
+        $this->indexAndAssert($indexer_reindex, $reindex_files, $database_contents, $logs);
+
+        return $database_contents;
     }
 
     //@todo the actual sensitive db + insensitive fs test: get 2 equivalent rows into the db somehow.
