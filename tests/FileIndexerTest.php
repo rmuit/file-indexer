@@ -495,53 +495,8 @@ class FileIndexerTest extends TestCase
         );
 
         // Test warning/removal of records in subdirectories that don't exist
-        // anymore. (checkIndexedRecordsInNonexistentSubdirs().)
-        // NOTE - this is one of two sub-tests which needs the 'subdirsCache'
-        // property populated. So we're implicitly testing the SQL query which
-        // populates that, but not when we're querying the complete $base_dir;
-        // we do that in the checkIndexedRecordsInNonexistentDir() test.
-        // Just move the directory to another file.
-        rename("$base_dir/aa/bb/cc", "$base_dir/cc");
-        // 1a: See if the query still picks up the records which are now in a
-        //     two layers deep missing directory.
-        $this->indexAndAssert($indexer, ["$base_dir/aa"], $database_contents, [
-            "warning: Indexed records exist for files in the following nonexistent subdirectories of directory 'aa/bb': cc.",
-        ]);
-        // 1b: Remove the now-empty bb; see if the query still picks up the
-        //     records which are now in a two layers deep missing directory.
-        rmdir("$base_dir/aa/bb");
-        $this->indexAndAssert($indexer, ["$base_dir/aa"], $database_contents, [
-            "warning: Indexed records exist for files in the following nonexistent subdirectories of directory 'aa': bb.",
-        ]);
-        // 2a: Test that the 2 records for aa/bb(/cc) are removed.
-        unset($database_contents[3]);
-        unset($database_contents[4]);
-        $this->indexAndAssert($indexer_remove, ["$base_dir/aa"], $database_contents, [
-            "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory 'aa/bb'.",
-        ]);
-        // Recap: we only have two indexed files named AA and AB, and we have
-        // two files in cc/ which are not indexed yet. For 2b, we first need to
-        // index them.
-        $database_contents[2] = ['cc', 'Aa', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42']; // hi
-        $database_contents[3] = ['cc', 'aa', '2aae6c35c94fcfb415dbe95f408b9ce91ee846ed']; // hello world
-        $this->indexAndAssert($indexer_remove, ["$base_dir/cc"], $database_contents, [
-            "info: Added 2 new file(s).",
-        ]);
-        // 2b: Test again that the 2 records for cc are removed. The difference
-        //     with 2a is that the SQL query operates on a directory that is
-        //     directly in the root directory. (This difference is basically
-        //     encoded by concatenateRelativePath(), and as long as that stays
-        //     the same, we only need to do this test variation once, not in
-        //     all tests which use the same LIKE construct for deletions.)
-        rename("$base_dir/cc", "$base_dir/aa/cc");
-        // We can't just index 'cc' because we'll get a "not found". So reindex
-        // the whole base directory.
-        $database_contents[2][0] = $database_contents[3][0] = 'aa/cc';
-        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
-            "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory 'cc'.",
-            "info: Added 2 new file(s).",
-            "info: Skipped 2 already indexed file(s).",
-        ]);
+        // anymore.
+        $this->doTestCheckIndexedRecordsInNonexistentSubdirs($base_dir, $indexer, $indexer_remove, $database_contents, 'aa/bb/cc', 'cc', 'aa/cc');
 
         // Test warning/removal of an entry for a file that is now a directory
         // with the same name. (checkIndexedRecordWithSameNameAsDir().)
@@ -714,10 +669,20 @@ class FileIndexerTest extends TestCase
             "info: Updated 1 file(s).",
         ]);
 
-        // This is the end of "what happens with 2 files with different case"
-        // tests; get rid of aa so we don't have to deal with warnings anymore.
-        // (We still have file /AA vs dir /aa; maybe remove later.)
+        // In order to not complicate further tests:
+        // - get rid of aa so we don't have to deal with warnings anymore. This
+        //   ends "what happens with 2 files with different case" tests.
         unlink("$base_dir/aa/bb/cc/aa");
+        // - unlink 'AA' so that directory 'aa' gets indexed and we have no
+        //   more warnings;
+        // - reindex-remove now, so we don't get the removal message at a later
+        //   random time.
+        unlink("$base_dir/AA");
+        unset($database_contents[0]);
+        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
+            "info: Removed indexed record for file 'AA' which actually matches a directory.",
+            "info: Skipped 2 already indexed file(s).",
+        ]);
 
         // Change a file's contents and then reindex it.
         $database_contents = $this->doTestReindexContents($base_dir, $indexer, $indexer_reindex, $database_contents, 'aa/bb/cc/AA', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42', 1);
@@ -739,15 +704,8 @@ class FileIndexerTest extends TestCase
             "info: Updated 1 file(s).",
         ]);
 
-        // Rename a directory to a different case, see if reindexing it will
-        // not do anything -> embedded in next step 0.
-
         // Test warning/removal of records in subdirectories that don't exist
-        // anymore. (checkIndexedRecordsInNonexistentSubdirs().)
-        // NOTE - this is one of two sub-tests which needs the 'subdirsCache'
-        // property populated. So we're implicitly testing the SQL query which
-        // populates that, but not when we're querying the complete $base_dir;
-        // we do that in the checkIndexedRecordsInNonexistentDir() test.
+        // anymore.
         // 0: Check if a subdirsCache containing 'duplicate' entries with
         //    varying case, works OK: re-case two layers of subdirectories, to
         //    make files end up in the database with different directory case.
@@ -757,70 +715,26 @@ class FileIndexerTest extends TestCase
         // Now copy a new file and index it; we'll have bB/cC/AB and bb/cc/AX.
         copy("$base_dir/AB", "$base_dir/aA/bB/cC/AB");
         $database_contents[] = ['aA/bB/cC', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42']; // hi
-        $this->indexAndAssert($indexer, ["$base_dir/aA/bB/cC/AB"], $database_contents, [
+        $database_contents = $this->doTestCheckIndexedRecordsInNonexistentSubdirs($base_dir, $indexer, $indexer_remove, $database_contents, 'aA/bB/cC', 'cc', 'aA/cc', 'aA/bB/cC/AB', 'cc', 'bb');
+
+        // Rename directory back to 'aa' for consistency of further tests.
+        rename("$base_dir/aA", "$base_dir/aa");
+        $database_contents[3][0] = $database_contents[4][0] = 'aa/cc';
+        $this->indexAndAssert($indexer_reindex, ["$base_dir/aa"], $database_contents, [
+            "info: Updated 2 file(s).",
+        ]);
+        // Recreate record for empty file 'AA' because we need it again below.
+        // @todo that's unfortunate. Can we change the tests without impacting test surface?
+        $fp = fopen("$base_dir/AA", 'w');
+        fclose($fp);
+        array_unshift($database_contents, ['', 'AA', 'da39a3ee5e6b4b0d3255bfef95601890afd80709']);
+        $this->indexAndAssert($indexer, ["$base_dir/AA"], $database_contents, [
             "info: Added 1 new file(s).",
         ]);
-        // ...and reindex: if subdirsCache works well, this won't log warnings.
-        $this->indexAndAssert($indexer, ["$base_dir/aA"], $database_contents, [
-            "info: Skipped 2 already indexed file(s).",
-        ]);
-        // Just move the directory to another file.
-        rename("$base_dir/aA/bB/cC", "$base_dir/cc");
-        // 1a: See if the query still picks up the records which are now in a
-        //     two layers deep missing directory. (There are warnings about
-        //     'two' directories now because we just display every casing of
-        //     a missing directory that is found in the database.)
-        $this->indexAndAssert($indexer, ["$base_dir/aA"], $database_contents, [
-            "warning: Indexed records exist for files in the following nonexistent subdirectories of directory 'aA/bB': cC, cc.",
-        ]);
-        // 1b: Remove the now-empty bb; see if the query still picks up the
-        //     records which are now in a two layers deep missing directory.
-        rmdir("$base_dir/aA/bB");
-        $this->indexAndAssert($indexer, ["$base_dir/aA"], $database_contents, [
-            "warning: Indexed records exist for files in the following nonexistent subdirectories of directory 'aA': bB, bb.",
-        ]);
-        // 2a: Test that the 2 records for aa/bb(/cc) are removed. (The cache
-        //     has directories with different case but only one is logged,
-        //     because the SQL query can't delete one of them at a time.)
-        unset($database_contents[3]);
-        unset($database_contents[4]);
-        $this->indexAndAssert($indexer_remove, ["$base_dir/aA"], $database_contents, [
-            "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory 'aA/bB'.",
-         ]);
-        // Recap: we only have two indexed files named AB and AX, and we have
-        // two files in cc/ which are not indexed yet. For 2b, we first need to
-        // index them.
-        $database_contents[2] = ['cc', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42']; // hi
-        $database_contents[3] = ['cc', 'AX', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'];
-        $this->indexAndAssert($indexer_remove, ["$base_dir/cc"], $database_contents, [
-            "info: Added 2 new file(s).",
-        ]);
-        // 2b: Test again that the 2 records for cc are removed. The difference
-        //     with 2a is that the SQL query operates on a directory that is
-        //     directly in the root directory. (This difference is basically
-        //     encoded by concatenateRelativePath(), and as long as that stays
-        //     the same, we only need to do this test variation once, not in
-        //     all tests which use the same LIKE construct for deletions.)
-        //     Another difference: don't test the varying casing again.
-        // Also, just rename aA back to aa so we don't need to change more code below. @todo check if we want to keep this.
-        rename("$base_dir/aA", "$base_dir/aa");
-        rename("$base_dir/cc", "$base_dir/aa/cc");
-        // We can't just index 'cc' because we'll get a "not found". So reindex
-        // the whole base directory. We won't reindex the entries in the  'aa'
-        // directory because there's still a 'AA' file, so that's why we get
-        // the below warning - but that's not what this test is about.
-        unset($database_contents[2]);
-        unset($database_contents[3]);
-//        $database_contents[2][0] = $database_contents[3][0] = 'aa/cc';
-        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
-            "warning: Directory '' contains entries for both AA and aa; these cannot both be indexed in a case insensitive database. Skipping the latter file.",
-            "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory 'cc'.",
-            "info: Skipped 2 already indexed file(s).",
-        ]);
+        unlink("$base_dir/AA");
 
         // Test warning/removal of an entry for a file that is now a directory
         // with the same name. (checkIndexedRecordWithSameNameAsDir().)
-        unlink("$base_dir/AA");
 // Note that as a consequence of previous tests, directory 'aa' is still there
 // so we don't need to place something on top of 'AA' - those are equivalent.
 //        rename("$base_dir/aa/cc", "$base_dir/AA");
@@ -833,9 +747,9 @@ class FileIndexerTest extends TestCase
         ];
         $this->indexAndAssert($indexer, [$base_dir], $database_contents, [
             "warning: Indexed record exists for file 'AA', which actually matches a directory.",
-            // 'aa' was not indexed yet; not connected with this specific test:
-            "info: Added 2 new file(s).",
-            "info: Skipped 1 already indexed file(s)."
+//            // 'aa' was not indexed yet; not connected with this specific test:
+//            "info: Added 2 new file(s).",
+            "info: Skipped 3 already indexed file(s)."
         ]);
         // Remove the duplicate indexed item for nonexistent file.
         unset($database_contents[0]);
@@ -845,9 +759,8 @@ class FileIndexerTest extends TestCase
         ]);
 
         // Re-setup directories with varying casing for the next test like we
-        // did for the checkIndexedRecordsInNonexistentSubdirs() tests,
-        // to maximize test surface. (We won't test 2 different ones for root &
-        // subdir though; see previous comment at 2b.)
+        // did for doTestCheckIndexedRecordsInNonexistentSubdirs() to
+        // maximize test surface.
         rename("$base_dir/aa/cc", "$base_dir/aa/cC");
         rename("$base_dir/aa", "$base_dir/aA");
         copy("$base_dir/AB", "$base_dir/aA/x0");
@@ -1029,74 +942,13 @@ class FileIndexerTest extends TestCase
         // Test warning/removal of records for files missing in a directory.
         $database_contents = $this->doTestCheckIndexedRecordsNonexistentInDir($base_dir, $indexer, $indexer_remove, $database_contents, 'aa/bb/cc/Aa', 'Ax', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42');
 
-
         // Test warning/removal of records in subdirectories that don't exist
-        // anymore. (checkIndexedRecordsInNonexistentSubdirs().)
-        // NOTE - this is one of two sub-tests which needs the 'subdirsCache'
-        // property populated. So we're implicitly testing the SQL query which
-        // populates that, but not when we're querying the complete $base_dir;
-        // we do that in the checkIndexedRecordsInNonexistentDir() test.
-        // 0: Check if a subdirsCache containing 'duplicate' entries with
-        //    varying case, works OK: re-case two layers of subdirectories, to
-        //    make files end up in the database with different directory case.
-        // Now copy a new file and index it; we'll have bB/cC/AB and bb/cc/AX.
+        // anymore.
+        // Copy a new file and index it (inside the method); we'll have
+        // bB/cC/AB and bb/cc/AX for extra test of point 0.
         copy("$base_dir/AB", "$base_dir/aa/bb/cc/AB");
         $database_contents[] = ['aA/bB/cC', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42']; // hi
-        $this->indexAndAssert($indexer, ["$base_dir/aA/bB/cC/AB"], $database_contents, [
-            "info: Added 1 new file(s).",
-        ]);
-        // ...and reindex: if subdirsCache works well, this won't log warnings.
-        $this->indexAndAssert($indexer, ["$base_dir/aA"], $database_contents, [
-            "info: Skipped 2 already indexed file(s).",
-        ]);
-        // Just move the directory to another file.
-        rename("$base_dir/aa/bb/cc", "$base_dir/cc");
-        // 1a: See if the query still picks up the records which are now in a
-        //     two layers deep missing directory. (There are warnings about
-        //     'two' directories now because we just display every casing of
-        //     a missing directory that is found in the database.)
-        $this->indexAndAssert($indexer, ["$base_dir/aA"], $database_contents, [
-            "warning: Indexed records exist for files in the following nonexistent subdirectories of directory 'aA/bb': cC, cc.",
-        ]);
-        // 1b: Remove the now-empty bb; see if the query still picks up the
-        //     records which are now in a two layers deep missing directory.
-        rmdir("$base_dir/aA/bB");
-        $this->indexAndAssert($indexer, ["$base_dir/aA"], $database_contents, [
-            "warning: Indexed records exist for files in the following nonexistent subdirectories of directory 'aA': bB, bb.",
-        ]);
-        // 2a: Test that the 2 records for aa/bb(/cc) are removed. (The cache
-        //     has directories with different case but only one is logged,
-        //     because the SQL query can't delete one of them at a time.)
-        unset($database_contents[2]);
-        unset($database_contents[3]);
-        $this->indexAndAssert($indexer_remove, ["$base_dir/aA"], $database_contents, [
-            "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory 'aA/bB'.",
-        ]);
-        // Recap: we only have two indexed files named AB and AX, and we have
-        // two files in cc/ which are not indexed yet. For 2b, we first need to
-        // index them.
-        $database_contents[2] = ['cc', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42']; // hi
-        $database_contents[3] = ['cc', 'Ax', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'];
-        $this->indexAndAssert($indexer_remove, ["$base_dir/cc"], $database_contents, [
-            "info: Added 2 new file(s).",
-        ]);
-        // 2b: Test again that the 2 records for cc are removed. The difference
-        //     with 2a is that the SQL query operates on a directory that is
-        //     directly in the root directory. (This difference is basically
-        //     encoded by concatenateRelativePath(), and as long as that stays
-        //     the same, we only need to do this test variation once, not in
-        //     all tests which use the same LIKE construct for deletions.)
-        //     Another difference: don't test the varying casing again.
-        // Also, just rename aA back to aa so we don't need to change more code below. @todo check if we want to keep this.
-        rename("$base_dir/cc", "$base_dir/aa/cc");
-        // We can't just index 'cc' because we'll get a "not found". So reindex
-        // the whole base directory.
-        $database_contents[2][0] = $database_contents[3][0] = 'aa/cc';
-        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
-            "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory 'cc'.",
-            "info: Added 2 new file(s).",
-            "info: Skipped 1 already indexed file(s).",
-        ]);
+        $this->doTestCheckIndexedRecordsInNonexistentSubdirs($base_dir, $indexer, $indexer_remove, $database_contents, 'aA/bb/cc', 'cc', 'aa/cc','aA/bB/cC/AB', 'cC', 'bB');
 
         // Test warning/removal of an entry for a file that is now a directory
         // with the same name. (checkIndexedRecordWithSameNameAsDir().)
@@ -1289,6 +1141,144 @@ class FileIndexerTest extends TestCase
         $this->indexAndAssert($indexer_remove, ["$base_dir/$reindex_dir"], $database_contents, [
             "info: Removed 1 indexed record(s) for nonexistent files in directory '$test_dir': $old_file.",
             "info: Skipped $skipped already indexed file(s).",
+        ]);
+
+        return $database_contents;
+    }
+
+    /**
+     * Helper to test checkIndexedRecordsInNonexistentSubdirs().
+     *
+     * That is: warning/removal of records in subdirectories that don't exist
+     * anymore. Called from several tests, hence all the pesky abstraction.
+     *
+     * NOTE - this is one of two sub-tests which needs the 'subdirsCache'
+     * property populated. So we're implicitly testing the SQL query which
+     * populates that, but not when we're querying the complete $base_dir; we
+     * do that in doTestCheckIndexedRecordsInNonexistentDir().
+     *
+     * @param string $base_dir
+     * @param FileIndexer $indexer
+     * @param FileIndexer $indexer_remove
+     * @param array[] $database_contents
+     * @param string $old_subdir
+     *   Subdir to be moved out of the way so we can see the errors. Also, the
+     *   base of this directory is what gets reindexed. NOTE on case sensitive
+     *   file systems you may re-case the base directory (which does not
+     *   influence the rename command) if you want the files to be reindexed
+     *   with a different case.
+     * @param string $moved_dir
+     * @param string $moved_dir_2b
+     *   (Optional) directory to move the moved directory to again a second
+     *   time. If empty, the caller must do the test themselves.
+     * @param string $first_index_file
+     *   (Optional) If nonempty, before starting, first index a file (that's
+     *   already copied into place). See reasons below.
+     * @param string $old_subdir_differently_indexed
+     *   (Optional) Another case with which this directory may be indexed
+     *   already, than is given in $old_subdir. This will then be shown in
+     *   warning messages.
+     * @param string $old_basedir_differently_indexed
+     *   (Optional) Same for the directory just below.
+     *
+     * @return array[]
+     *   The modified database contents.
+     */
+    private function doTestCheckIndexedRecordsInNonexistentSubdirs($base_dir, $indexer, $indexer_remove, $database_contents, $old_subdir, $moved_dir, $moved_dir_2b, $first_index_file = '', $old_subdir_differently_indexed = '', $old_basedir_differently_indexed = '')
+    {
+        // $old_subdir can have 3 levels, in which case the 'base' and the
+        // 'very base' ($reindex_base) are different.
+        $old_sub_base = dirname($old_subdir);
+        $reindex_base = strstr($old_subdir, '/', true);
+        $nonexistent_subdirs = basename($old_subdir);
+        // $nonexistent_subdirs is usually like 'cc') but can also be 'cC, cc'.
+        if ($old_subdir_differently_indexed) {
+            $dirs = [$nonexistent_subdirs, $old_subdir_differently_indexed];
+            sort($dirs);
+            $nonexistent_subdirs = implode(', ', $dirs);
+        }
+
+        if ($first_index_file) {
+            // 0: Check if a subdirsCache containing 'duplicate' entries with
+            //    varying case, works OK: re-case two layers of subdirectories,
+            //    to make files end up in the database with different directory
+            //    case. This is a continuation from the caller; copying and
+            //    preparing $database_contents is already done.
+            $this->indexAndAssert($indexer, ["$base_dir/$first_index_file"], $database_contents, [
+                "info: Added 1 new file(s).",
+            ]);
+            // ...and reindex: if subdirsCache works well, this won't log warnings.
+            $this->indexAndAssert($indexer, ["$base_dir/$reindex_base"], $database_contents, [
+                "info: Skipped 2 already indexed file(s).",
+            ]);
+        }
+
+        // Just move the directory elsewhere rather than removing it.
+        rename("$base_dir/$old_subdir", "$base_dir/$moved_dir");
+        // 1a: See if the query still picks up the records which are now in a
+        //     two layers deep missing directory. (There are warnings about
+        //     'two' directories now because we just display every casing of
+        //     a missing directory that is found in the database.)
+        $this->indexAndAssert($indexer, ["$base_dir/$reindex_base"], $database_contents, [
+            "warning: Indexed records exist for files in the following nonexistent subdirectories of directory '$old_sub_base': $nonexistent_subdirs.",
+        ]);
+
+        // 1b: Assumption: $old_sub_base is now empty, and is a multilayer
+        //     directory whose first level we can remove. Remove it; see if the
+        //     query still picks up the records which are now in a two layers
+        //     deep missing directory.
+        $nonexistent_subdirs = basename($old_sub_base);
+        // $nonexistent_subdirs is usually like 'cc') but can also be 'cC, cc'.
+        if ($old_basedir_differently_indexed) {
+            $dirs = [$nonexistent_subdirs, $old_basedir_differently_indexed];
+            sort($dirs);
+            $nonexistent_subdirs = implode(', ', $dirs);
+        }
+        rmdir("$base_dir/$old_sub_base");
+        $this->indexAndAssert($indexer, ["$base_dir/$reindex_base"], $database_contents, [
+            "warning: Indexed records exist for files in the following nonexistent subdirectories of directory '$reindex_base': $nonexistent_subdirs.",
+        ]);
+
+        // 2a: Test that the 2 records for aa/bb(/cc) are removed. (Even if the
+        //     cache has directories with different case but only one is logged,
+        //     because the SQL query can't delete one of them at a time.)
+        $moved_entry2 = array_pop($database_contents);
+        $moved_entry1 = array_pop($database_contents);
+        // Assume it's the "smallest" directory name that gets displayed.
+        if ($old_basedir_differently_indexed && $old_basedir_differently_indexed < basename($old_sub_base)) {
+            $old_sub_base = substr($old_sub_base, 0, strlen($old_sub_base) - strlen($old_basedir_differently_indexed)) . $old_basedir_differently_indexed;
+        }
+        $this->indexAndAssert($indexer_remove, ["$base_dir/$reindex_base"], $database_contents, [
+            "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory '$old_sub_base'.",
+        ]);
+        // For 2b, we first need to index the files we've moved.
+        $moved_entry1[0] = $moved_entry2[0] = $moved_dir;
+        array_push($database_contents, $moved_entry1);
+        array_push($database_contents, $moved_entry2);
+        $this->indexAndAssert($indexer_remove, ["$base_dir/$moved_dir"], $database_contents, [
+            "info: Added 2 new file(s).",
+        ]);
+
+        // 2b: Test again that the 2 records for $moved_dir are removed.
+        //     The difference with 2a is that the SQL query operates on a
+        //     directory that is directly in the root directory. (This
+        //     difference is basically encoded by concatenateRelativePath(),
+        //     and as long as that stays the same, we only need to do this
+        //     test variation once, not in all tests which use the same
+        //     LIKE construct for deletions.)
+        rename("$base_dir/$moved_dir", "$base_dir/$moved_dir_2b");
+        $moved_entry2 = array_pop($database_contents);
+        $moved_entry1 = array_pop($database_contents);
+        $moved_entry1[0] = $moved_entry2[0] = $moved_dir_2b;
+        array_push($database_contents, $moved_entry1);
+        array_push($database_contents, $moved_entry2);
+        // We can't just index '$moved_dir' because we'll get a "not found". So
+        // reindex the whole base directory.
+        $count = count($database_contents) - 2;
+        $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, [
+            "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory '$moved_dir'.",
+            "info: Added 2 new file(s).",
+            "info: Skipped $count already indexed file(s).",
         ]);
 
         return $database_contents;
