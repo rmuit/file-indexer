@@ -934,7 +934,7 @@ class FileIndexer extends SubpathProcessor
     }
 
     /**
-     * Split filename in directory and filename, for use in the database.
+     * Splits filename in directory and filename, for use in the database.
      *
      * This helper function reminds us that dirname() is not a good solution.
      *
@@ -1093,7 +1093,7 @@ class FileIndexer extends SubpathProcessor
             if ($result) {
                 $record->fid = $result;
             } else {
-                $this->getLogger()->error('Unexpected return value from drupal_write_record/insert: {result}.', ['result' => json_encode($result)]);
+                $this->getLogger()->error('Unexpected return value from drupal_write_record/insert: {result}.', ['result' => $this->varToString($result)]);
             }
         }
 
@@ -1103,7 +1103,7 @@ class FileIndexer extends SubpathProcessor
     /// Database specific and action specific methods.
 
     /**
-     * Execute a non-select query.
+     * Executes a non-select query.
      *
      * @param string $query
      *   Un-prepared query, with placeholders as can also be used for calling
@@ -1115,7 +1115,7 @@ class FileIndexer extends SubpathProcessor
      *   (Admittedly this is a strange way to do things; quick and dirty and
      *   does the job.)
      *   0 = return the number of affected rows
-     *   1 = return the last inserted IDl assumes insert statement. May have
+     *   1 = return the last inserted ID; assumes insert statement. May have
      *       extra logic to make the statement work. Use only when applicable.
      *   other values: undefined.
      *
@@ -1132,25 +1132,7 @@ class FileIndexer extends SubpathProcessor
             // This is very unexpected; no details logged so far.
             throw new RuntimeException('Database statement execution failed.');
         }
-        // Below is NOT true, but is commented out for now. Delete later.
-//        if ($special_handling === 2) {
-//            foreach ($parameters as $key => $value) {
-//                // $dir for some reason cannot be an empty string and I don't
-//                // want to spend time finding out why. (Probably has something
-//                // to do with PDO + SQLite.) So I defined the column as nullable
-//                if ($key === 'xxdir' && $value === '') {
-//                    $value = null;
-//                }
-//                $statement->bindValue(":$key", $value);
-//            }
-//            $ret = $statement->execute();
-//        } else {
-//            // Above comment would also apply here
-//            if (isset($parameters['xxdir']) && $parameters['xxdir'] === '') {
-//                $parameters['xxdir'] = '/';
-//            }
-            $ret = $statement->execute($parameters);
-//        }
+        $ret = $statement->execute($parameters);
         if (!$ret) {
             // This is very unexpected; no details logged so far.
             throw new RuntimeException('Database statement execution failed.');
@@ -1166,7 +1148,7 @@ class FileIndexer extends SubpathProcessor
     }
 
     /**
-     * Fetch database rows for query.
+     * Fetches database rows for query.
      *
      * Note the code in this class does not have any idea whether an empty
      * directory (i.e. a file in the base directory) is returned as null or
@@ -1216,7 +1198,7 @@ class FileIndexer extends SubpathProcessor
     }
 
     /**
-     * Fetch single database column for query.
+     * Fetches single database column for query.
      *
      * @param string $query
      *   Un-prepared query, with placeholders as can also be used for calling
@@ -1332,7 +1314,7 @@ class FileIndexer extends SubpathProcessor
     /// confirm() and related.
 
     /**
-     * Check whether we are in some kind of interactive session.
+     * Checks whether we are in some kind of interactive session.
      *
      * @return bool
      *   True if the user can confirm things somehow
@@ -1344,7 +1326,7 @@ class FileIndexer extends SubpathProcessor
     }
 
     /**
-     * Ask a question.
+     * Asks a question.
      *
      * Only call this if isInteractiveSession() returns True.
      *
@@ -1362,15 +1344,17 @@ class FileIndexer extends SubpathProcessor
     }
 
     /**
-     * Return a string representation of a variable.
+     * Returns a string representation of a variable.
      *
      * @param mixed $var
      *   The variable.
+     * @param bool $represent_scalar_type
+     *   (Optional) If true, make sure to distinguish strings / ints / null.
      *
      * @return string
      *   Some string representation.
      */
-    protected static function placeholderToString($var)
+    protected static function varToString($var, $represent_scalar_type = false)
     {
         if (is_object($var) && method_exists($var, "__toString")) {
             // This is especially relevant for an 'exception' context value.
@@ -1381,8 +1365,8 @@ class FileIndexer extends SubpathProcessor
         }
         // Plain string does not show the difference between numeric strings
         // and numbers. For inline insertion as placeholders in messages we
-        // don't need that.
-        if (is_scalar($var)) {
+        // often don't need that.
+        if (is_scalar($var) && !$represent_scalar_type) {
             return (string)$var;
         }
         // JSON is the smallest array/object representation we have. We don't

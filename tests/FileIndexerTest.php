@@ -419,6 +419,74 @@ class FileIndexerTest extends TestCase
         return $dir;
     }
 
+    /**
+     * Removes a directory recursively and removes all indexed database records.
+     *
+     * Call this after a test which created a directory, is done.
+     *
+     * @param $base_dir
+     */
+    protected function removeFiles($base_dir) {
+        // Remove the directory after the test, and clean database table.
+        $logger = new TestLogger();
+        $processor = new PathRemover($logger);
+        $processor->processPaths([$base_dir]);
+        // Do various duplicate checks on whether there were no errors. (We
+        // expect errors to be noted in the 'errors' state as well as in logs,
+        // but we'll test both.) It's disputable whether encountering an error
+        // here means that a FileIndexer test should fail... but we will fail
+        // it anyway.
+        $errors = $processor->getState('errors');
+        // 'warnings' does not exist but it might in the future.
+        $warnings = $processor->getState('warnings');
+        $logs = array_diff_key($logger->recordsByLevel, ['debug' => true, 'info' => true, 'notice' => true]);
+        if ($errors || $warnings || $logs) {
+            $description = "$errors error(s)" . ($warnings ? ", $warnings warning(s)" : '')
+                . ' encountered by file cleanup: ' . $this->varToString($logs);
+            throw new RuntimeException($description);
+        }
+        if (file_exists($base_dir)) {
+            throw new RuntimeException("PathRemover did not completely remove $base_dir.");
+        }
+
+        $this->pdo_connection->exec("DELETE FROM file;");
+    }
+
+    /**
+     * Returns a string representation of a variable.
+     *
+     * @param mixed $var
+     *   The variable.
+     * @param bool $represent_scalar_type
+     *   (Optional) If true, make sure to distinguish strings / ints / null.
+     *
+     * @return string
+     *   Some string representation.
+     */
+    private static function varToString($var, $represent_scalar_type = false)
+    {
+        if (is_object($var) && method_exists($var, "__toString")) {
+            // This is especially relevant for an 'exception' context value.
+            // Also if $inline == True, we still prefer to properly convert to
+            // a string instead of bluntly JSON-encoding, if the class says it
+            // can do it.
+            return (string)$var;
+        }
+        // Plain string does not show the difference between numeric strings
+        // and numbers. For inline insertion as placeholders in messages we
+        // often don't need that.
+        if (is_scalar($var) && !$represent_scalar_type) {
+            return (string)$var;
+        }
+        // JSON is the smallest array/object representation we have. We don't
+        // have other 'inline' representations, so use it, at the risk of not
+        // properly representing certain objects.
+        if (function_exists('json_encode')) {
+            return json_encode($var);
+        }
+        return str_replace("\n", '', var_export($var, true));
+    }
+
     // @todo do processing of relative and absolute directory names as input, in different tests
     // todo also when setting base dir. <- even when feeding absolute paths; in that case we should be able to set it to a wrong value.
 
@@ -528,9 +596,7 @@ class FileIndexerTest extends TestCase
         $oldnewfile_hash = 'c22b5f9178342609428d6f51b2c5af4c0bde6a42';
         $this->doTestCheckIndexedRecordsInNonexistentDir($base_dir, $indexer, $indexer_remove, $old_file, $old_dir_new_file, $new_moved_dir, $oldnewfile_hash, $dirfile1_name, $dirfile1_hash, $dirfile2_name, $dirfile2_hash);
 
-        // Remove the directory after the test.
-        $processor = new PathRemover($logger);
-        $processor->processPaths([$base_dir]);
+        $this->removeFiles($base_dir);
     }
 
     /**
@@ -743,9 +809,7 @@ class FileIndexerTest extends TestCase
             ['zz/cC', 'x1', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
         ]);
 
-        // Remove the directory after the test.
-        $processor = new PathRemover($logger);
-        $processor->processPaths([$base_dir]);
+        $this->removeFiles($base_dir);
     }
 
     /**
@@ -765,7 +829,8 @@ class FileIndexerTest extends TestCase
         $this->doTestIfile(true);
     }
 
-    private function doTestIfile($case_insensitive_database) {
+    private function doTestIfile($case_insensitive_database)
+    {
         // Note below tests assume knowledge about the created file structure.
         $base_dir = $this->createCaseInsensitiveFileStructure();
         if (!$base_dir) {
@@ -930,9 +995,7 @@ class FileIndexerTest extends TestCase
             ['zz/cc', 'x1', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
         ]);
 
-        // Remove the directory after the test.
-        $processor = new PathRemover($logger);
-        $processor->processPaths([$base_dir]);
+        $this->removeFiles($base_dir);
     }
 
     /**
@@ -1367,7 +1430,6 @@ class FileIndexerTest extends TestCase
 //@todo now check all todos in FileIndexer again.
 
 
-//@todo get rid of all the throws at rename, unlink, etc
 
 // @todo ...and then see if we can split out some code?
 
@@ -1392,7 +1454,4 @@ class FileIndexerTest extends TestCase
 //  that when running the first part of FileSDbI with insensitive=false.)
 //  ^<-- this should result in docs which say how important it is to get those configs right
 //     (and, I guess, note that the 2 defaults are different.)
-
-// @todo check that all PathRemovers have zero errors. And check manually that all the directories are clened out,
-//   after a successful test.
 }
