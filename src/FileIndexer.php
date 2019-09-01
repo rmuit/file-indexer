@@ -2,7 +2,6 @@
 
 namespace Wyz\PathProcessor;
 
-use Exception;
 use PDO;
 use Psr\Log\LoggerInterface;
 use RuntimeException;
@@ -252,11 +251,13 @@ class FileIndexer extends SubpathProcessor
      *   The directory to read, as an absolute path. (We assume it's readable.)
      *
      * @return string[]
-     *   The filenames in this directory.
+     *   The names of the directory entries, excluding '.' and '..', possibly
+     *   deduplicated (for case sensitive file system vs. case insensitive
+     *   database).
      */
     protected function readDirectory($directory)
     {
-        $paths = parent::readDirectory($directory);
+        $directory_entry_names = parent::readDirectory($directory);
 
         // If two files on a case sensitive file system have the same filename
         // when ignoring case, then they can't both be indexed. We'll skip the
@@ -265,7 +266,7 @@ class FileIndexer extends SubpathProcessor
         // from the first file would just be overridden.)
         if (empty($this->config['case_insensitive_filesystem']) && !empty($this->config['case_insensitive_database'])) {
             $seen = [];
-            foreach ($paths as $key => $entry) {
+            foreach ($directory_entry_names as $key => $entry) {
                 $key_file = strtolower($entry);
                 if (isset($seen[$key_file])) {
                     $this->getLogger()->warning("Directory '{dir}' contains entries for both {entry1} and {entry2}; these cannot both be indexed in a case insensitive database. Skipping the latter file.", [
@@ -273,9 +274,9 @@ class FileIndexer extends SubpathProcessor
                         'entry1' => $seen[$key_file],
                         'entry2' => $entry,
                     ]);
-                    // Skip file by unsetting it in $paths. (Does not influence
-                    // foreach.)
-                    unset($paths[$key]);
+                    // Skip file by unsetting it in $directory_entry_names.
+                    // (Does not influence foreach.)
+                    unset($directory_entry_names[$key]);
                 } else {
                     $seen[$key_file] = $entry;
                 }
@@ -291,7 +292,13 @@ class FileIndexer extends SubpathProcessor
         if ($this->caseInsensitiveFileRecordMatching()) {
             $key_dir = $this->modifyCacheKey($key_dir);
 
-            $this->populateDirRecordsCacheCaseSensitive($directory, $paths);
+            // We'll also store the dir inside the record, to remember the case as
+            // stored in the db (which the cache key has lost).
+            $dir_sql_expr = $this->modifySqlWhereExpr('dir');
+            $qr = $this->dbFetchAll('SELECT fid, dir, filename, ' . implode(', ', $this->config['cache_fields'])
+                . " FROM {$this->config['table']} WHERE $dir_sql_expr = :d", [':d' => $key_dir]);
+            $dir = $this->getPathRelativeToAllowedBase($directory);
+            $this->recordsCache[$key_dir] = $this->deduplicateRecordsCaseInsensitive($qr, $dir, $directory_entry_names);
         } else {
             // Case sensitive file system + database means we don't need to
             // preprocess the casing for our internal index arrays like we do
@@ -304,7 +311,7 @@ class FileIndexer extends SubpathProcessor
         }
 
         // Check for indexed records which don't exist as files.
-        $this->checkIndexedRecordsNonexistentInDir($directory, $paths);
+        $this->checkIndexedRecordsNonexistentInDir($directory, $directory_entry_names);
 
         // Cache all first-level subdirectories containing indexed records,
         // regardless whether they exist as files. Two checks need this info.
@@ -348,88 +355,9 @@ class FileIndexer extends SubpathProcessor
 
         // Check for indexed records whose directories (and therefore also the
         // files) don't exist.
-        $this->checkIndexedRecordsInNonexistentSubdirs($directory, $paths);
+        $this->checkIndexedRecordsInNonexistentSubdirs($directory, $directory_entry_names);
 
-        return $paths;
-    }
-
-    /**
-     * Populates directory cache with case sensitive database or file system.
-     *
-     * This
-     * - always makes the key for the cache directory lower case
-     * - in some cases unifies the database-queried directory name to lower case
-     * - always removes duplicate records from the database (which can happen
-     *   if the database is case sensitive).
-     *
-     * It's only split from readDirectory() because that became too big.
-     *
-     * @param $directory
-     *   The directory we're reading, as an absolute path.
-     * @param string[] $paths
-     *   The paths from that directory, which we already read. (We need to
-     *   pass those in for one very specific check; doing anything else with
-     *   them would be complicated by issues around case sensitivity.)
-     */
-    protected function populateDirRecordsCacheCaseSensitive($directory, array $paths)
-    {
-        // We could have called modifyCacheKey() here, which would always
-        // strtolower() the key. We choose to call strtolower() directly
-        // because we also use it below.
-        $key_dir = strtolower($this->getPathRelativeToAllowedBase($directory));
-
-        $this->recordsCache[$key_dir] = [];
-        // We'll also store the dir inside the record, to remember the case as
-        // stored in the db (which the cache key has lost).
-        $dir_sql_expr = $this->modifySqlWhereExpr('dir');
-        $qr = $this->dbFetchAll('SELECT fid, dir, filename, ' . implode(', ', $this->config['cache_fields'])
-            . " FROM {$this->config['table']} WHERE $dir_sql_expr = :d", [':d' => $key_dir]);
-        foreach ($qr as $record) {
-            // If the database is case sensitive, we assume there could be
-            // duplicate records (for mis-cased files); these will need to be
-            // deduplicated. (If the database is case insensitive, the isset()
-            // isset() is not necessary / will never match anything.)
-//@todo test this (sensitive db, insensitive fs otherwise we would not come here)
-            if (isset($this->recordsCache[$key_dir][strtolower($record->filename)])) {
-                // Don't depend on the 'remove_nonexistent_from_index' config
-                // value; always delete if we cannot prompt, because these
-                // duplicate records can actually influence comparison
-                // operations if we leave them in.
-                if ($this->isInteractiveSession()) {
-                    $remove = $this->confirm('Duplicate indexed files (with varying casing) found for {file}, even though the file system is apparently case sensitive. Remove one of them?', [
-                        'file' => $this->concatenateRelativePath($record->dir, $record->filename),
-                    ]);
-                } else {
-                    $this->getLogger()->warning('Duplicate indexed files (with varying casing) found for {file}, even though the file system is apparently case sensitive. Deleting one of them.', [
-                        'file' => $this->concatenateRelativePath($record->dir, $record->filename),
-                    ]);
-                    $remove = true;
-                }
-                if ($remove) {
-                    $other_record = $this->recordsCache[$key_dir][strtolower($record->filename)];
-                    // If the directory entry has the same case as the filename
-                    // in this record, and the directory argument has the same
-                    // casing as the directory in this record, delete the other
-                    // one. (We don't know for sure if the directory, as
-                    // provided in the argument, actually has the same case as
-                    // on the file system, but it's likely and it's the best we
-                    // have.)
-                    if ($directory === $record->dir && in_array($record->filename, $paths, true)) {
-                        $delete_fid = $other_record->fid;
-                    } else {
-                        $delete_fid = $record->fid;
-                        // Don't overwrite the record below.
-                        $record = null;
-                    }
-                    $this->dbExecuteQuery("DELETE FROM {$this->config['table']} WHERE fid = :fid", [':fid' => $delete_fid]);
-                }
-            }
-            // Set or overwrite record, unless it was unset above because we
-            // want to keep the same already-cached record.
-            if ($record) {
-                $this->recordsCache[$key_dir][strtolower($record->filename)] = $record;
-            }
-        }
+        return $directory_entry_names;
     }
 
     /**
@@ -467,6 +395,13 @@ class FileIndexer extends SubpathProcessor
                 . " FROM {$this->config['table']} WHERE $dir_sql_expr = :d AND $filename_expr = :f";
             $rows = $this->dbFetchAll($sql, [':d' => $key_dir, ':f' => $key_file]);
             if ($rows) {
+                if (count($rows) > 1) {
+                    // This really only happens with a case insensitive file
+                    // system and a case sensitive database which somehow has
+                    // multiple records for the same file. Delete all but one.
+                    list($tmp_dir, $tmp_file) = $this->splitFileName($relative_path);
+                    $rows = $this->deduplicateRecordsCaseInsensitive($rows, $tmp_dir, [$tmp_file]);
+                }
                 $this->recordsCache[$key_dir][$key_file] = current($rows);
             }
         }
@@ -520,6 +455,86 @@ class FileIndexer extends SubpathProcessor
     /// some because they are called from many methods.
 
     /**
+     * De-duplicate indexed records for case insensitive database / file system.
+     *
+     * This method must not be called when both file system and database are
+     * case sensitive. It
+     * - always makes the key for the cache directory lower case
+     * - in some cases unifies the database-queried directory name to lower case
+     * - always removes duplicate records from the database (which can happen
+     *   if the database is case sensitive).
+     *
+     * @param array|\Traversable $records
+     *   The records for files we want to check (usually all in a directory),
+     * @param string $relative_directory
+     *   The name of the directory containing all path(s), relative to the
+     *   allowed base. Just used for a check.
+     * @param string[] $directory_entry_names
+     *   The file paths corresponding to the records (usually all entries read
+     *   from the directory on disk). Just used for a check.
+     *
+     * @return \stdClass[]
+     *   The records as an array, often unmodified but could be de-duplicated.
+     */
+    protected function deduplicateRecordsCaseInsensitive($records, $relative_directory, array $directory_entry_names)
+    {
+        $deduped_records = [];
+        foreach ($records as $record) {
+            // Below isset() is unnecessary / will never match anything for
+            // case insensitive databases. For case sensitive databases, this
+            // code is only executed for case insensitive file systems but we
+            // we assume there still could be duplicate records (for mis-cased
+            // files, inserted either by direct SQL or by a FileIndexer that
+            // was mistakenly configured as having a case sensitive database).
+            // These must be deduplicated.
+            if (isset($deduped_records[strtolower($record->filename)])) {
+                // Don't depend on the 'remove_nonexistent_from_index' config
+                // value; always delete if we cannot prompt, because these
+                // duplicate records can actually influence comparison
+                // operations if we leave them in.
+                $remove = true;
+                if ($this->isInteractiveSession()) {
+                    $remove = $this->confirm("Duplicate indexed record (with varying casing) found for file '{file}', even though the file system is apparently case insensitive. Remove one of the records?", [
+                        'file' => $this->concatenateRelativePath($record->dir, $record->filename),
+                    ]);
+                }
+                if ($remove) {
+                    $seen_record = $deduped_records[strtolower($record->filename)];
+                    // If the indexed record's directory/filename case
+                    // correspond to passed arguments, delete the other one.
+                    // This preserves either the record with a 'correct' case,
+                    // or the first one in the record set. (We don't know for
+                    // sure if the passed arguments have the same case as the
+                    // entries in the file system, but it's likely and it's the
+                    // best we have.)
+                    if ($record->dir === $relative_directory && in_array($record->filename, $directory_entry_names, true)) {
+                        $keep_record = $record;
+                        $delete_record = $seen_record;
+                    } else {
+                        $keep_record = $seen_record;
+                        $delete_record = $record;
+                        // Don't overwrite the record below.
+                        $record = null;
+                    }
+                    $this->dbExecuteQuery("DELETE FROM {$this->config['table']} WHERE fid = :fid", [':fid' => $delete_record->fid]);
+                    // If we didn't prompt, the below message is not duplicate.
+                    $this->getLogger()->warning("Removed record for '{delete_file}' because another record for '{keep_file}' exists. These records are duplicate because the file system is apparently case insensitive.", [
+                        'delete_file' => $this->concatenateRelativePath($delete_record->dir, $delete_record->filename),
+                        'keep_file' => $this->concatenateRelativePath($keep_record->dir, $keep_record->filename),
+                    ]);
+                }
+            }
+            // Set or overwrite record, unless it was unset above because we
+            // want to keep the same already-cached record.
+            if ($record) {
+                $deduped_records[strtolower($record->filename)] = $record;
+            }
+        }
+
+        return $deduped_records;
+    }
+
+    /**
      * Checks for indexed records in a directory, which don't exist as files.
      *
      * If found, remove them or warn about them.
@@ -529,11 +544,11 @@ class FileIndexer extends SubpathProcessor
      *
      * @param $directory
      *   The directory we've read, as an absolute path.
-     * @param string[] $paths
-     *   The paths from that directory which we already read, which do exist.
-     *   Any indexed paths not among these are assumed not to exist.
+     * @param string[] $directory_entry_names
+     *   The entries in that directory, which we already read and which do
+     *   exist.Any indexed paths not among these are assumed not to exist.
      */
-    protected function checkIndexedRecordsNonexistentInDir($directory, array $paths)
+    protected function checkIndexedRecordsNonexistentInDir($directory, array $directory_entry_names)
     {
         $key_dir = $this->modifyCacheKey($this->getPathRelativeToAllowedBase($directory));
 
@@ -544,10 +559,10 @@ class FileIndexer extends SubpathProcessor
         // We often want to 'diff' case-insensitively, but without e.g.
         // changing the resulting array to all-lowercase.
         $nonexistent_files = $this->caseInsensitiveFileRecordMatching()
-            ? array_udiff($indexed_files, $paths, function ($a, $b) {
+            ? array_udiff($indexed_files, $directory_entry_names, function ($a, $b) {
                 return strcmp(strtolower($a), strtolower($b));
             })
-            : array_diff($indexed_files, $paths);
+            : array_diff($indexed_files, $directory_entry_names);
         if ($nonexistent_files) {
             // Warn or remove. Having these records stay in the database has no
             // consequences, so by default we only warn if we can't prompt for
@@ -588,11 +603,11 @@ class FileIndexer extends SubpathProcessor
 
                 if ($this->caseInsensitiveFileRecordMatching()) {
                     // Keys in recordsCache are all lowercased.
-                    $paths = array_map('strtolower', $paths);
+                    $directory_entry_names = array_map('strtolower', $directory_entry_names);
                 }
                 $this->recordsCache[$key_dir] = array_intersect_key(
                     $this->recordsCache[$key_dir],
-                    array_combine($paths, $paths)
+                    array_combine($directory_entry_names, $directory_entry_names)
                 );
             } elseif (!$skip_warning) {
                 $this->getLogger()->warning("Indexed records exist for the following nonexistent files in directory '{dir}': {files}.", [
@@ -614,11 +629,11 @@ class FileIndexer extends SubpathProcessor
      *
      * @param $directory
      *   The directory we've read, as an absolute path.
-     * @param string[] $paths
-     *   The paths from that directory which we already read, which do exist.
-     *   Any indexed paths not among these are assumed not to exist.
+     * @param string[] $directory_entry_names
+     *   The entries in that directory, which we already read and which do
+     *   exist.Any indexed paths not among these are assumed not to exist.
      */
-    protected function checkIndexedRecordsInNonexistentSubdirs($directory, array $paths)
+    protected function checkIndexedRecordsInNonexistentSubdirs($directory, array $directory_entry_names)
     {
         $key_dir = $this->modifyCacheKey($this->getPathRelativeToAllowedBase($directory));
 
@@ -629,10 +644,10 @@ class FileIndexer extends SubpathProcessor
         // case insensitively. Preferably without e.g. changing the resulting
         // array to all-lowercase, for the benefit of log messages.
         $nonexistent_dirs = $this->caseInsensitiveFileRecordMatching()
-            ? array_udiff($this->subdirsCache[$key_dir], $paths, function ($a, $b) {
+            ? array_udiff($this->subdirsCache[$key_dir], $directory_entry_names, function ($a, $b) {
                 return strcmp(strtolower($a), strtolower($b));
             })
-            : array_diff($this->subdirsCache[$key_dir], $paths);
+            : array_diff($this->subdirsCache[$key_dir], $directory_entry_names);
         if ($nonexistent_dirs) {
             // Warn or remove. Having these records stay in the database has no
             // consequences, so by default we only warn if we can't prompt for
@@ -688,10 +703,10 @@ class FileIndexer extends SubpathProcessor
 
 //@todo test the below?  Do a test class which can read subdirsCache, or check that it's empty at the end? <- I kinda believe it's already OK but still
                 $this->subdirsCache[$key_dir] = $this->caseInsensitiveFileRecordMatching()
-                    ? array_uintersect($this->subdirsCache[$key_dir], $paths, function ($a, $b) {
+                    ? array_uintersect($this->subdirsCache[$key_dir], $directory_entry_names, function ($a, $b) {
                         return strcmp(strtolower($a), strtolower($b));
                     })
-                    : array_intersect($this->subdirsCache[$key_dir], $paths);
+                    : array_intersect($this->subdirsCache[$key_dir], $directory_entry_names);
             } elseif (!$skip_warning) {
                 $this->getLogger()->warning("Indexed records exist for files in the following nonexistent subdirectories of directory '{dir}': {subdirs}.", [
                     'dir' => $this->getPathRelativeToAllowedBase($directory),

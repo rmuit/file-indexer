@@ -315,12 +315,12 @@ class PathProcessor
      */
     protected function processDirectory($directory)
     {
-        $relative_paths = $this->readDirectory($directory);
-        foreach ($relative_paths as $relative_path) {
+        $directory_entry_names = $this->readDirectory($directory);
+        foreach ($directory_entry_names as $name) {
             // Our processing is 'mostly depth-first': if our entry is a
             // directory, we finish the whole tree before returning here. But
             // inside a directory we don't process directories before files.
-            $this->processFileOrDir("$directory/$relative_path");
+            $this->processFileOrDir("$directory/$name");
         }
     }
 
@@ -331,7 +331,7 @@ class PathProcessor
      *   The directory to read, as an absolute path. (We assume it's readable.)
      *
      * @return string[]
-     *   The filenames in this directory.
+     *   The names of the directory entries, excluding '.' and '..'.
      */
     protected function readDirectory($directory)
     {

@@ -817,8 +817,16 @@ class FileIndexerTest extends TestCase
      */
     public function testIfileSdb()
     {
-        // @todo the extra test. doTestIfile() does init and teardown, so we should change that while adding the test.
+        // All tests except the next one are same as case insensitive db.
         $this->doTestIfile(false);
+
+        // Test de-duplication of indexed records. Do it on a multilayer
+        // directory (where the 2nd layer is always the same case) so that
+        // we're sure the code doesn't process just the basename of the
+        // directory rather than the whole one...
+        $this->doTestDeduplicateRecordsCaseInsensitive('aa/cc');
+        // ...and in the root, so we're sure checks work against directory ''.
+        $this->doTestDeduplicateRecordsCaseInsensitive('');
     }
 
     /**
@@ -993,6 +1001,88 @@ class FileIndexerTest extends TestCase
             ['aA/cC', 'x1', $oldfile_hash],
             ['zz', 'x00', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
             ['zz/cc', 'x1', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
+        ]);
+
+        $this->removeFiles($base_dir);
+    }
+
+    /**
+     * Helper to test de-duplication of indexed records (for IfileSdb).
+     */
+    function doTestDeduplicateRecordsCaseInsensitive($dir)
+    {
+
+        // Create fresh directory structure.
+        $base_dir = $this->createCaseInSensitiveDir();
+        if (!$base_dir) {
+            return '';
+        }
+        $logger = new TestLogger();
+        $indexer_default_config = [
+            'pdo' => $this->pdo_connection,
+            'allowed_base_directory' => $base_dir,
+            'case_insensitive_filesystem' => true,
+            'case_insensitive_database' => false,
+        ];
+        $indexer = new FileIndexer($logger, $indexer_default_config);
+
+        // Test setup:
+        if ($dir) {
+            if (!is_string($dir) || strtolower($dir) !== $dir || strlen($dir) < 2) {
+                throw new RuntimeException("Argument to doTestDeduplicateRecordsCaseInsensitive('$dir') must be a lowercase string containing at least two characters.");
+            }
+            mkdir("$base_dir/$dir", 0755, true);
+            $dir2 = ucfirst($dir);
+            $dirX = $dir . '/';
+            $dir2X = $dir2 . '/';
+            // Keep 2 files the same case, just with different dir case, for
+            // extra test.
+            $bb = 'bb';
+        } else {
+            $dir2 = $dirX = $dir2X = '';
+            $bb = 'BB';
+        }
+        $fp = fopen("$base_dir/{$dirX}bb", 'w');
+        fclose($fp);
+        $faulty_indexer = new FileIndexer($logger, ['case_insensitive_filesystem' => false] + $indexer_default_config);
+
+        // Index three records for the same file.
+        $this->indexAndAssert($faulty_indexer, ["$base_dir/{$dir2X}$bb", "$base_dir/{$dirX}bb", "$base_dir/{$dirX}bB"], [
+            [$dir, 'bb', 'da39a3ee5e6b4b0d3255bfef95601890afd80709'],
+            [$dir, 'bB', 'da39a3ee5e6b4b0d3255bfef95601890afd80709'],
+            [$dir2, $bb, 'da39a3ee5e6b4b0d3255bfef95601890afd80709'],
+        ], [
+            "info: Added 3 new file(s).",
+        ]);
+        // The actual test, when processing a directory. (This should also pick
+        // up the entry from $dir2. Assuming the records are retrieved in order
+        // of insertion, this happens to run through both the 'if' and the
+        // 'else' part of the code, keeping $dir/bb.)
+        $this->indexAndAssert($indexer, $dir ? ["$base_dir/$dir"] : [$base_dir], [
+            [$dir, 'bb', 'da39a3ee5e6b4b0d3255bfef95601890afd80709'],
+        ], [
+            "warning: Removed record for '{$dir2X}$bb' because another record for '{$dirX}bb' exists. These records are duplicate because the file system is apparently case insensitive.",
+            "warning: Removed record for '{$dirX}bB' because another record for '{$dirX}bb' exists. These records are duplicate because the file system is apparently case insensitive.",
+            "info: Skipped 1 already indexed file(s).",
+        ]);
+
+        // Again add the just-deleted records for this file.
+        $this->indexAndAssert($faulty_indexer, ["$base_dir/{$dir2X}$bb", "$base_dir/{$dirX}bB"], [
+            [$dir, 'bb', 'da39a3ee5e6b4b0d3255bfef95601890afd80709'],
+            [$dir, 'bB', 'da39a3ee5e6b4b0d3255bfef95601890afd80709'],
+            [$dir2, $bb, 'da39a3ee5e6b4b0d3255bfef95601890afd80709'],
+        ], [
+            "info: Added 2 new file(s).",
+        ]);
+        // And test the same logic called from processFile(). (This will
+        // preserve the one with the specified case, even though that's not the
+        // case on disk.)
+        $this->indexAndAssert($indexer, ["$base_dir/{$dir2X}$bb"], [
+            [$dir2, $bb, 'da39a3ee5e6b4b0d3255bfef95601890afd80709'],
+        ], [
+            "warning: Removed record for '{$dirX}bb' because another record for '{$dir2X}$bb' exists. These records are duplicate because the file system is apparently case insensitive.",
+            "warning: Removed record for '{$dirX}bB' because another record for '{$dir2X}$bb' exists. These records are duplicate because the file system is apparently case insensitive.",
+            "info: Skipped 1 already indexed file(s).",
         ]);
 
         $this->removeFiles($base_dir);
@@ -1423,15 +1513,8 @@ class FileIndexerTest extends TestCase
         $this->indexAndAssert($indexer_remove, [$base_dir], $database_contents, $logs);
     }
 
-    //@todo the actual sensitive db + insensitive fs test: get 2 equivalent rows into the db somehow.
 
 
-
-//@todo now check all todos in FileIndexer again.
-
-
-
-// @todo ...and then see if we can split out some code?
 
 // @TODO set the 'LIKE pragma' where you shouldn't (and the other way around),
 //  and see if you get errors.
@@ -1439,8 +1522,6 @@ class FileIndexerTest extends TestCase
 //@TODO can we assert that recordsCache is empty, so we don't fill up memory?
 //@TODO can/should we test that recordsCache gets added/removed from, during the time that files are processed?
 //@todo we should maybe make some test class so we can peek into subdirsCache to see if it's expected?
-
-//@todo cleanup files / dirs
 
 //@todo try to process unreadable fiel, see what it does?
 
