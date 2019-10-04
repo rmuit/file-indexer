@@ -8,10 +8,15 @@ use RuntimeException;
 /**
  * Does processing (which is not defined in this class) on files.
  *
- * The general idea is to construct a new class (with the needed config) and
+ * The general idea is to construct a new object (with the needed config) and
  * then call processPaths() on all files/directories that need to be processed
- * (recursively). validatePath() may be called but beforehand but this should
+ * (recursively). validatePath() may be called beforehand but this should
  * generally not be necessary, because validation is done in processPaths().
+ *
+ * State values contain a.o. 'errors' for the number of errors encountered; see
+ * getState() and the constructor. The number of errors does not get reset
+ * between two calls to processPaths(); if you need a reset, just construct a
+ * new object (which is assumed to be inexpensive).
  */
 class PathProcessor
 {
@@ -159,13 +164,23 @@ class PathProcessor
     public function validatePath($path, $check_existence = true)
     {
         if (!is_string($path) || !$path) {
-            $this->getLogger()->error("Not a pathname: {path}.", ['path' => $path]);
+            $this->getLogger()->error("Not a pathname: '{path}'.", ['path' => $path]);
             return '';
         }
 
         // Make absolute.
         if ($path[0] !== '/') {
-            $path = $this->getBaseDirectory() . '/' . $path;
+            // processing '.' and './pathname' works fine; it just logs
+            // unnecessary debug messages below, like
+            // "Processing BASEDIR/./subdir as BASEDIR/subdir". Prevent that.
+            if ($path === '.') {
+                $path = $this->getBaseDirectory();
+            } else {
+                if (substr($path, 0, 2) === './') {
+                    $path = substr($path, 2);
+                }
+                $path = $this->getBaseDirectory() . '/' . $path;
+            }
         }
 
         // Normalize: strip trailing slash, unless it's the root directory (which
@@ -173,24 +188,16 @@ class PathProcessor
         if (substr($path, -1) === '/' && $path !== '/') {
             $path = rtrim($path, '/');
             if (file_exists($path) && !is_dir($path)) {
-                $this->getLogger()->error("{path} ends with a directory separator but is not a directory.", ['path' => "$path/"]);
+                $this->getLogger()->error("'{path}' ends with a directory separator but is not a directory.", ['path' => "$path/"]);
                 return '';
             }
         }
 
-        // We don't support processing symlinks (at least for now) because we
-        // get the canonical path just below, and no reference to the original
-        // link path would be left at all. Decision for now is, we might as well
-        // skip them. (Our caller will likely consider this an error, unlike
-        // processFileOrDir()... which is fine.)
         $canonicalize_full_path = $check_existence;
         if ($check_existence && is_link($path)) {
-            if (empty($this->config['case_insensitive_filesystem'])) {
-                $this->getLogger()->error("{path} is a symlink; this is not supported.", ['path' => $path]);
-                return '';
-            }
             // Don't canonicalize the symlink itself, only the base directory -
-            // just like if $check_existence is false.
+            // just like if $check_existence is false. This means the
+            // original link name is what is returned from here and processed.
             $canonicalize_full_path = false;
         }
 
@@ -200,11 +207,11 @@ class PathProcessor
         // file_exists will handle symlinks correctly; returns false if the
         // target file does not exist.
         if ($check_existence && !file_exists($check_path)) {
-            $this->getLogger()->error("{path} does not exist.", ['path' => $check_path]);
+            $this->getLogger()->error("'{path}' does not exist.", ['path' => $check_path]);
             return '';
         }
         if (!$check_existence && !is_dir($check_path)) {
-            $this->getLogger()->error("{path} is not a directory.", ['path' => $check_path]);
+            $this->getLogger()->error("'{path}' is not a directory.", ['path' => $check_path]);
             return '';
         }
 
@@ -223,7 +230,7 @@ class PathProcessor
         }
 
         if ($realpath !== $path) {
-            $this->getLogger()->debug('Processing {path} as {realpath}.', ['path' => $path, 'realpath' => $realpath]);
+            $this->getLogger()->debug("Processing '{path}' as '{realpath}'.", ['path' => $path, 'realpath' => $realpath]);
         }
         return $realpath;
     }
@@ -243,6 +250,8 @@ class PathProcessor
      */
     public function processPaths(array $paths)
     {
+        $errors_at_start = $this->state['errors'];
+
         // Validate all paths beforehand.
         $ok_paths = [];
         foreach ($paths as $path) {
@@ -260,15 +269,17 @@ class PathProcessor
             }
         }
 
-        // Process paths only if all of them could be validated.
-        $return = !(bool)$this->state['errors'];
-        if (!$this->state['errors']) {
+        // Process paths only if all of them could be validated. ('errors'
+        // state can't really be smaller than $errors_at_start. But maybe a
+        // child class reset the count, which isn't disallowed.)
+        $do_processing = $this->state['errors'] <= $errors_at_start;
+        if ($do_processing) {
             foreach ($ok_paths as $path) {
                 $this->processFileOrDir($path);
             }
         }
 
-        return $return;
+        return $do_processing;
     }
 
     /**
@@ -287,7 +298,7 @@ class PathProcessor
             // Symlinks are considered errors in validatePath() but we may
             // encounter them while doing recursive processing, in which case
             // we skip them. (So the registered 'state' is different.)
-            $this->getLogger()->error("{path} is a symlink; this is not supported.", ['path' => $path]);
+            $this->getLogger()->error("'{path}' is a symlink; this is not supported.", ['path' => $path]);
             $this->state['symlinks_skipped']++;
         } elseif (is_dir($path)) {
             $this->processDirectory($path);

@@ -12,7 +12,7 @@ use RuntimeException;
  * separation, though introducing many layers of inheritance arguably doesn't
  * have any other uses.
  *
- * Note that relative path names passed into processPaths() are (seen as)
+ * Note that relative path names passed into processPaths() must be
  * relative to getBaseDirectory() (which is the working directory or the
  * 'base_directory' setting), which is not necessarily relative to the
  * 'allowed_base_directory' setting. (This class does not set 'base_directory',
@@ -59,15 +59,14 @@ class SubpathProcessor extends PathProcessor
      */
     public function validatePath($path, $check_existence = true)
     {
-        if ($path && is_string($path)) {
-            $check_path = $path[0] === '/' ? $path : $this->getBaseDirectory();
-            if (!$this->getPathRelativeToAllowedBase($check_path) && $check_path !== $this->getAllowedBaseDirectory()) {
-                $this->getLogger()->error("Unknown base directory; I won't process {path}.", ['path' => $path]);
+        $realpath = parent::validatePath($path, $check_existence);
+        if ($realpath) {
+            if (!$this->getPathRelativeToAllowedBase($realpath) && $realpath !== $this->getAllowedBaseDirectory()) {
                 return '';
             }
         }
 
-        return parent::validatePath($path, $check_existence);
+        return $realpath;
     }
 
     /**
@@ -89,7 +88,7 @@ class SubpathProcessor extends PathProcessor
             $base .= '/';
             if ((empty($this->config['case_insensitive_filesystem'])
                     ? strpos($path, $base) : stripos($path, $base)) !== 0) {
-                $this->getLogger()->error("{path} is not inside an allowed base directory.", ['path' => $path]);
+                $this->getLogger()->error("'{path}' is not inside an allowed base directory.", ['path' => $path]);
                 return '';
             }
         }

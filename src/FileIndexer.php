@@ -13,7 +13,12 @@ use stdClass;
  * 'Indexed values' is the SHA1 value by default, but this can be overridden.
  *
  * Indexed records are saved in columns 'dir' and 'filename' in a table called
- * 'file'.
+ * 'file'. The 'dir' value is a subdir of the allowed_base_directory setting as
+ * implemented by SubpathProcessor; '' (not NULL) for files in the 'allowed
+ * base root'. (To reiterate: this could be different from the 'base_directory'
+ * setting which governs how relative paths for the input parameter of
+ * processPaths() are resolved, which is optional, not set by default, and not
+ * used by this class.)
  *
  * This class works on a PDO database connection passed into the constructor as
  * $config['pdo']. If that isn't passed in, processPaths() will throw a fatal
@@ -172,6 +177,7 @@ class FileIndexer extends SubpathProcessor
             'equal' => 0,
             'skipped' => 0,
             'symlinks_skipped' => 0,
+            'errors' => 0,
         ]);
 
         $processed = parent::processPaths($paths);
@@ -701,7 +707,6 @@ class FileIndexer extends SubpathProcessor
                     $seen[strtolower($dir)] = true;
                 }
 
-//@todo test the below?  Do a test class which can read subdirsCache, or check that it's empty at the end? <- I kinda believe it's already OK but still
                 $this->subdirsCache[$key_dir] = $this->caseInsensitiveFileRecordMatching()
                     ? array_uintersect($this->subdirsCache[$key_dir], $directory_entry_names, function ($a, $b) {
                         return strcmp(strtolower($a), strtolower($b));
