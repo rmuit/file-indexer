@@ -1,4 +1,4 @@
-# PathProcessor / FileIndexer
+# PathProcessor / FileIndexer             [![Build Status](https://api.travis-ci.com/rmuit/file-indexer.svg?branch=master)](https://travis-ci.com/rmuit/file-indexer)
 
 PathProcessor is a base class that allows iterating recursively through files
 and subdirectories, and performs an action on them. The action in PathProcessor
@@ -98,8 +98,10 @@ database connection globally; this should be up to the caller.
 
 ## Compatibility / testing
 
-Although PHP5.6 is officially End Of Life, this code will remain compatible
-with it until there is a real reason to introduce PHP7-only language constructs.
+Although PHP5.6 is officially End Of Life, I'll try to keep this code 
+compatible with it until there is a real reason to introduce PHP7-only language
+constructs. It's not tested on PHP5 though, because the unit tests are not
+compatible with PHPUnit 5.
 
 The tricky thing with PHPUnit tests is that they need both a case sensitive and
 a case insensitive file system, and these things cannot be emulated. So

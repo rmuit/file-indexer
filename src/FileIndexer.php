@@ -1048,8 +1048,11 @@ class FileIndexer extends SubpathProcessor
         // of the dir/filename that was passed into processPaths(), may be
         // cased differently than the actual dir/filename; we'll take it as
         // passed.)
-        if (($record->dir !== $cached_values->dir || $record->filename !== $cached_values->filename)
-            && !empty($this->config['reindex_all'])) {
+        if (
+            ($record->dir !== $cached_values->dir
+                || $record->filename !== $cached_values->filename)
+            && !empty($this->config['reindex_all'])
+        ) {
             return false;
         }
 

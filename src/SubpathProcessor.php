@@ -86,8 +86,8 @@ class SubpathProcessor extends PathProcessor
         // without logging anything, because the path is allowed.
         if ($path !== $base) {
             $base .= '/';
-            if ((empty($this->config['case_insensitive_filesystem'])
-                    ? strpos($path, $base) : stripos($path, $base)) !== 0) {
+            $pos = empty($this->config['case_insensitive_filesystem']) ? strpos($path, $base) : stripos($path, $base);
+            if ($pos !== 0) {
                 $this->getLogger()->error("'{path}' is not inside an allowed base directory.", ['path' => $path]);
                 return '';
             }

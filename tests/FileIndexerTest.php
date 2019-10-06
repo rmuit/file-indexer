@@ -74,7 +74,7 @@ class FileIndexerTest extends TestCase
      */
     protected static $skipCaseInsensitiveTests;
 
-    public static function setUpBeforeClass()
+    public static function setUpBeforeClass() : void
     {
         self::$skipCaseInsensitiveTests = self::$skipCaseSensitiveTests = false;
         parent::setUpBeforeClass();
@@ -94,13 +94,14 @@ class FileIndexerTest extends TestCase
     {
         list($work_dir) = $this->createAnyFileStructure(false);
 
-        // We choose not to leave any junk behind, so are immediately removing
-        // the directory again _before_ trying. We can do this because it's the
-        // only point in the whole test file where we expect an exception -
-        // if we'd need to test more exceptions, we would need to do cleanup
-        // of directories afterwards, somehow. (Note: nonexistent basedir or
-        // basedir-is-file should throw the same exception; we don't test for
-        // basedir-is-file because of the above.)
+        // We try not to leave any junk behind, so are immediately removing
+        // the directory again _before_ trying. Notes:
+        // - Nonexistent basedir or basedir-is-file should throw the same
+        //   exception; we don't test for basedir-is-file because of the above.
+        // - We're not succeeding in 'not leaving junk behind' because there's
+        //   one other test now that does ExpectException, thereby not removing
+        //   its files at the end.
+        // @todo do something about this. Cleanup at an after-test method?
         $logger = new TestLogger();
         $processor = new PathRemover($logger);
         $processor->processPaths([$work_dir]);
@@ -284,7 +285,7 @@ class FileIndexerTest extends TestCase
         $work_dir = $indexer->getConfig('allowed_base_directory');
 
         // Don't let PHPUnit bail out on the warning emitted by sha1_file().
-        Warning::$enabled = false;
+        $this->expectException(Warning::class);
         chmod("$work_dir/AB", 0);
         $this->indexAndAssert($indexer, ["$work_dir/AB"], [], [
             "error: sha1_file error processing $work_dir/AB!?",
@@ -292,8 +293,10 @@ class FileIndexerTest extends TestCase
             // logged during file validation), there's a summary log at the end.
             "warning: Encountered 1 indexing error(s).",
         ]);
-        Warning::$enabled = true;
 
+        // This code is not reached because of the expectException, so we leave
+        // junk behind.
+        // @todo do something about this. Cleanup at an after-test method?
         $this->removeFiles($work_dir);
     }
 
