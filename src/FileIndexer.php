@@ -2,6 +2,7 @@
 
 namespace Wyz\PathProcessor;
 
+use LogicException;
 use PDO;
 use Psr\Log\LoggerInterface;
 use RuntimeException;
@@ -420,27 +421,36 @@ class FileIndexer extends SubpathProcessor
                 } else {
                     list($record->dir, $record->filename) = $this->splitFileName($relative_path);
 
-                    // If there is a cache item, we blindly assume it has a
-                    // 'fid' property. Also, there's a possible race condition
-                    // here if the database contents changed between when we
-                    // last read it and now. We'll just log an  error and
-                    // continue if a record cannot be inserted/updated.
+                    // There's a possible race condition here if the database
+                    // contents changed between when we last read it and now.
+                    // We'll log an error and continue if a record cannot be
+                    // inserted, because that often happens as an effect of
+                    // incorrect db-case setting. (Also when case insensitive
+                    // db is set while the db is actually case sensitive: then
+                    // above check-query for a single file won't notice an
+                    // existing file with uppercase letter already in the db.)
+                    // Note this depends on the implementation of
+                    // dbWriteRecord; our standard implementation often throws
+                    // an exception for failed updates (rather than inserts)
+                    // and therefore doesn't actually return here, because we
+                    // don't know a common cause for failed UPDATE statements.
                     if (empty($this->recordsCache[$key_dir][$key_file])) {
                         if ($this->dbWriteRecord($record)) {
                             $this->state['new']++;
                             // fid is supposed to be added to $record.
                             $this->recordsCache[$key_dir][$key_file] = $record;
                         } else {
-                            $this->getLogger()->error('Something went wrong while saving a new index record for {file}.', ['file' => $record->filename]);
+                            $this->getLogger()->error("Something went wrong while saving a new index record for '{file}'. Hint: is the 'case_insensitive_database' setting correct?", ['file' => $record->dir . '/' . $record->filename]);
                             $this->state['errors']++;
                         }
                     } elseif (!$this->checkValuesEqualStored($record, $this->recordsCache[$key_dir][$key_file])) {
+                        // If there is a cache item, we assume it has a 'fid'.
                         if ($this->dbWriteRecord($record, $this->recordsCache[$key_dir][$key_file]->fid)) {
                             $this->state['updated']++;
                             $record->fid = $this->recordsCache[$key_dir][$key_file]->fid;
                             $this->recordsCache[$key_dir][$key_file] = $record;
                         } else {
-                            $this->getLogger()->error('Something went wrong while updating an index record for {file}.', ['file' => $filename]);
+                            $this->getLogger()->error("Something went wrong while updating an index record for '{file}'.", ['file' => $filename]);
                             $this->state['errors']++;
                         }
                     } else {
@@ -1085,14 +1095,16 @@ class FileIndexer extends SubpathProcessor
                 $args[$param] = $value;
             }
             $args['fid'] = $fid;
-            // Return value can be 1 or 0 for number of updated rows.
             $result = $this->dbExecuteQuery(
                 "UPDATE {$this->config['table']} SET " . implode(', ', $sets) . " WHERE fid=:fid",
                 $args
             );
+            // Return value can be 1 or 0 for number of updated rows. This
+            // check/log (and the one below at INSERT) is arguably unneeded; we
+            // shouldn't need to second guess the number of affected rows.
             $ret = ($result === 0 || $result === 1);
             if (!$ret) {
-                $this->getLogger()->error('Unexpected return value from drupal_write_record/update: {result}.', ['result' => $result]);
+                $this->getLogger()->error('Unexpected return value from update query: {result}.', ['result' => $result]);
             }
         } else {
             $fields = [];
@@ -1107,13 +1119,28 @@ class FileIndexer extends SubpathProcessor
                 $values[] = ":$param";
                 $args[$param] = $value;
             }
-            $result = $this->dbExecuteQuery("INSERT INTO {$this->config['table']} (" . implode(', ', $fields)
-                . ') VALUES (' . implode(', ', $values) . ')', $args, 1);
-            $ret = (bool)$result;
-            if ($result) {
-                $record->fid = $result;
-            } else {
-                $this->getLogger()->error('Unexpected return value from drupal_write_record/insert: {result}.', ['result' => $this->varToString($result)]);
+            // We protect this with a try/catch because failed insert
+            // statements can be caused by an incorrect db-case setting. (Also
+            // when you set case insensitive while the db is case sensitive:
+            // then the check-query for a single file in processFile() won't
+            // notice an existing file with uppercase letter already in the
+            // db.) This means failed updates will throw an exception and break
+            // off, while failed inserts will just log an error and continue;
+            // that seems OK if we think that failed update == inconsistent db
+            // state, while failed insert == incomplete but not inconsistent.
+            try {
+                $result = $this->dbExecuteQuery("INSERT INTO {$this->config['table']} (" . implode(', ', $fields)
+                    . ') VALUES (' . implode(', ', $values) . ')', $args, 1);
+                $ret = (bool)$result;
+                if ($result) {
+                    $record->fid = $result;
+                } else {
+                    $this->getLogger()->error('Unexpected return value from insert query: {result}.', ['result' => $this->varToString($result)]);
+                }
+            } catch (RuntimeException $e) {
+                // We have no specific exception message to log; the caller
+                // will also log. So just continue here.
+                $ret = false;
             }
         }
 
@@ -1150,11 +1177,12 @@ class FileIndexer extends SubpathProcessor
         $statement = $pdo->prepare($query);
         if (!$statement) {
             // This is very unexpected; no details logged so far.
-            throw new RuntimeException('Database statement execution failed.');
+            throw new LogicException('Database statement execution failed.');
         }
         $ret = $statement->execute($parameters);
         if (!$ret) {
-            // This is very unexpected; no details logged so far.
+            // Some queries could fail if case sensitivity settings are
+            // incorrect; callers should catch that and log hints if they want.
             throw new RuntimeException('Database statement execution failed.');
         }
         $affected_rows = $statement->rowCount();
