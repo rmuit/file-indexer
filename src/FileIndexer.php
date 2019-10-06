@@ -67,18 +67,6 @@ use stdClass;
  * it out into backend specific classes, for simplicity. So the way to change
  * something is to extend this class and override those methods, which have no
  * official interface. It's not the most flexible way, but it'll do.
- *
- * @todo check how we deduce mysql/postgresql, because I'll need it for drupal too. Change dbLikeOperation for it.
- *
- * @todo move the following to another class, including the drush_confirm logic and drush_cwd in parentS.
- * When running from drush, there's a chance the user will be prompted about
- * duplicate/superfluous database records. To prevent 'hanging' (even though
- * the prompt text still gets displayed), always provide a -y / -n argument.
- *
- * @todo also move the drush_cwd stuff up into the drupal class? (Doublecheck. I think we did that.)
- *
- * @todo doublecheck all the Drupal specific functions in the Drupal class, be sure the things still make sense / no function signature changed.
- * @todo this also means that in confirm(), we should replace {} placeholders by '@'...
  */
 class FileIndexer extends SubpathProcessor
 {
@@ -183,7 +171,8 @@ class FileIndexer extends SubpathProcessor
 
         $processed = parent::processPaths($paths);
 
-        // We assume that if processing was canceled, an error was logged.
+        // We assume that if processing was canceled, an error was logged so
+        // we won't log again.
         if ($processed) {
             $value = $this->getState('new');
             if ($value) {
@@ -209,8 +198,8 @@ class FileIndexer extends SubpathProcessor
             }
             $value = $this->getState('errors');
             if ($value) {
-                // We assume we've logged already and this is not an actionable
-                // message so 'warning' should be enough.
+                // Summarize errors. This is not an actionable message and we
+                // assume we've logged the error already so 'warning' is enough.
                 $this->getLogger()->warning('Encountered {count} indexing error(s).', ['count' => $value]);
             }
         }
@@ -1325,6 +1314,11 @@ class FileIndexer extends SubpathProcessor
      * This is encoded in a separate method because database systems have
      * different defaults for case sensitivity and for changing it.
      *
+     * NOTE: SQLite works in a way which doesn't need a modified method/code
+     * here; instead, the caller should set 'case sensitive like' with a PRAGMA
+     * statement if both the database and the file system are supposed to be
+     * case sensitive. See README.md.
+     *
      * @param string $left
      *   The 'left hand operand' to perform the 'LIKE' on. Usually a field,
      *   otherwise a literal expression (already escaped, including quotes etc).
@@ -1337,12 +1331,6 @@ class FileIndexer extends SubpathProcessor
      */
     protected function dbLikeOperation($left, $right)
     {
-        // For SQLite we don't need a modification because we've already set
-        // 'case sensitive like' in a PRAGMA statement, when creating the db.
-        // @todo mention in the README that this is necessary.
-
-        // SQLite's LIKE is case sensitive by default; to make it case sensitive
-        // we need to set a PRAGMA. So we don't need to change the operation.
         return  "$left LIKE $right";
         // Mysql is case insensitive by default; for a case sensitive clause,
         // we need to render '<left> LIKE BINARY <right>'.

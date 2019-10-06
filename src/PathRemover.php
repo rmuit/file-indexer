@@ -9,7 +9,7 @@ use Psr\Log\LoggerInterface;
  *
  * While iterating through directories, it first reads the contents from the
  * directory before unlink()ing each one individually. This may not be the most
- * efficient (could we 'rm * in another way?), but it's simple reuse of code.
+ * efficient (could we 'rm *' in another way?), but it's simple reuse of code.
  */
 class PathRemover extends PathProcessor
 {
@@ -23,12 +23,13 @@ class PathRemover extends PathProcessor
     {
         $processed = parent::processPaths($paths);
 
-        // We assume that if processing was canceled, an error was logged.
+        // We assume that if processing was canceled, an error was logged so
+        // we won't log again.
         if ($processed) {
             $value = $this->getState('errors');
             if ($value) {
-                // We assume we've logged already and this is not an actionable
-                // message so 'warning' should be enough.
+                // Summarize errors. This is not an actionable message and we
+                // assume we've logged the error already so 'warning' is enough.
                 $this->getLogger()->warning('Encountered {count} error(s).', ['count' => $value]);
             }
         }

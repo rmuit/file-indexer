@@ -33,6 +33,7 @@ class PathProcessor
      * There's a getter for access by outside code, or as a 'shorthand' for
      * when you're not sure if the value is set... but it's perfectly allowed
      * to read/write directly to this variable from within the (child) class.
+     * (Writing to config values will usually only be done in the constructor.)
      * There is no support for a default value (yet?), so it's up to the code
      * to check if things are set or up to the constructor to always populate a
      * value. So for some behavior, 'defaults' are just spread around the code.
@@ -50,7 +51,9 @@ class PathProcessor
      * For classes to put any value here that they need to remember. There's a
      * getter for access by outside code, or as a 'shorthand' for when you're
      * not sure if the value is set... but it's perfectly allowed to read/write
-     * directly to this variable from within the (child) class.
+     * directly to this variable from within the (child) class. There is no
+     * support for a default value (yet?), so it's up to the code to check if
+     * things are set or up to the constructor to always populate a value.
      *
      * @var array
      */
@@ -66,6 +69,7 @@ class PathProcessor
      */
     public function __construct(LoggerInterface $logger, array $config = [])
     {
+        // See getBaseDirectory() for using the 'base_directory' config setting.
         if (isset($config['base_directory'])) {
             if (!is_string($config['base_directory'])) {
                 throw new RuntimeException("The 'base_directory' configuration value must be a string.");
@@ -75,6 +79,12 @@ class PathProcessor
             }
         }
         $this->config = $config + [
+                // Case insensitive file system will mean that if two values
+                // with the same name except or casing are passed to
+                // processPaths(), they are treated as duplicates and only one
+                // will get processed. The primary reason for implementing it
+                // is that it can mean a lot more for child classes.
+                'case_insensitive_filesystem' => false,
                 // By default, symlinks are not processed, because we dont want
                 // to make assumptions about what we can do with them; they
                 // will cause errors to be logged. Set this to true to pass all
@@ -82,6 +92,8 @@ class PathProcessor
                 // support setting this to a non-empty string, to distinguish
                 // various types of processing of symlinks.
                 'process_symlinks' => false,
+                // Reorder directory entries before processing them?
+                'sort_directory_entries' => false,
             ];
 
         $this->state = ['errors' => 0, 'symlinks_skipped' => 0];
@@ -145,7 +157,7 @@ class PathProcessor
      */
     protected function getBaseDirectory()
     {
-        return $this->config['base_directory'] ?? getcwd();
+        return isset($this->config['base_directory']) ? $this->config['base_directory'] : getcwd();
     }
 
     /**

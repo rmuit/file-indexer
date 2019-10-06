@@ -11,7 +11,6 @@ use Wyz\PathProcessor\FileIndexer;
 use Wyz\PathProcessor\PathProcessor;
 use Wyz\PathProcessor\PathRemover;
 
-// @todo document the env vars which are overridable (by env or xml) <- document interpreter option -d variables_order=EGPCS ?
 
 /**
  * Test class for FileIndexer.
@@ -29,10 +28,12 @@ use Wyz\PathProcessor\PathRemover;
  *
  * My approach to writing tests has been to not make separate tests for every
  * single method, but instead to devise a test file system structure that will
- * hopefully run through all code I feel needs to be checked.
+ * hopefully run through all code I feel needs to be checked. There are four
+ * 'main' test methods containing lots of tests, for each permutation of
+ * case sensitivity of file system vs. database.
  *
- * isInteractiveSession() / confirm() is not tested, because there is very
- * little
+ * isInteractiveSession() / confirm() is not tested/emulated, because there is
+ * very little code which is only executed for interactive sessions.
  *
  * There are no separate tests for PathProcessor/SubpathProcessor; the proper
  * working of recursive processing, relative/absolute paths, skipping symlinks,
