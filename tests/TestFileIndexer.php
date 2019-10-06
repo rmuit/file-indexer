@@ -2,6 +2,7 @@
 
 namespace Wyz\PathProcessor\Tests;
 
+use Exception;
 use Wyz\PathProcessor\FileIndexer;
 
 /**
@@ -32,12 +33,12 @@ class TestFileIndexer extends FileIndexer
         // to be as strict as we can.)
         $after = $this->countTwoDimensionalArray($this->recordsCache);
         if ($before !== $after) {
-            throw new \Exception("Cached items still left after processing '$directory': before $before, after $after.");
+            throw new Exception("Cached items still left after processing '$directory': before $before, after $after.");
         }
 
         $subdirs_after = $this->countTwoDimensionalArray($this->subdirsCache);
         if ($subdirs_before !== $subdirs_after) {
-            throw new \Exception("Cached subdirs still left after processing '$directory': before $before, after $after.");
+            throw new Exception("Cached subdirs still left after processing '$directory': before $before, after $after.");
         }
     }
 
@@ -59,10 +60,9 @@ class TestFileIndexer extends FileIndexer
         // Check.
         $after = $this->countTwoDimensionalArray($this->recordsCache);
         if ($after !== $before && (!$can_add_file_to_cache || $after !== $before + 1)) {
-            throw new \Exception("Cached items still left after processing '$filename': before $before, after $after.");
+            throw new Exception("Cached items still left after processing '$filename': before $before, after $after.");
         }
     }
-
 
     /**
      * Returns a count of all individual items in a two-dimensional array.
@@ -73,7 +73,8 @@ class TestFileIndexer extends FileIndexer
      * @return int
      *   The total number of file items, in this dir/file array.
      */
-    protected function countTwoDimensionalArray($two_dimensional_array) {
+    protected function countTwoDimensionalArray($two_dimensional_array)
+    {
         $count = 0;
         if (isset($two_dimensional_array)) {
             foreach ($two_dimensional_array as $cached_dir) {

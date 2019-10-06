@@ -113,7 +113,7 @@ class PathProcessor
      */
     public function getConfig($name)
     {
-        return isset($this->config[$name]) ? $this->config[$name] : NULL;
+        return isset($this->config[$name]) ? $this->config[$name] : null;
     }
 
     /**
@@ -131,7 +131,7 @@ class PathProcessor
      */
     public function getState($name)
     {
-        return isset($this->state[$name]) ? $this->state[$name] : NULL;
+        return isset($this->state[$name]) ? $this->state[$name] : null;
     }
 
     /**

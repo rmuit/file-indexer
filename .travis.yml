@@ -1,9 +1,10 @@
 language: php
 
+# We want to check whether this still runs on PHP5 as long as we don't have
+# the need for any special PHP7-isms. Older PHP7 versions aren't as important
+# to check; their PHPUnit versions don't differ that much.
 php:
   - 5.6
-  - 7.1
-  - 7.2
   - 7.3
 
 before_install:
@@ -13,6 +14,5 @@ install:
   - composer install
 
 script:
-  - vendor/bin/phpcs --ignore='vendor/*' --standard=PSR12
-  #  --exclude=Generic.Files.LineLength .
+  - vendor/bin/phpcs --standard=PSR12 --ignore='vendor/*' --exclude=Generic.Files.LineLength .
   - vendor/bin/phpunit tests

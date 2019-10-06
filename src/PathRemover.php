@@ -25,13 +25,13 @@ class PathRemover extends PathProcessor
 
         // We assume that if processing was canceled, an error was logged.
         if ($processed) {
-             $value = $this->getState('errors');
-             if ($value) {
-                 // We assume we've logged already and this is not an actionable
-                 // message so 'warning' should be enough.
-                 $this->getLogger()->warning('Encountered {count} error(s).', ['count' => $value]);
-             }
-         }
+            $value = $this->getState('errors');
+            if ($value) {
+                // We assume we've logged already and this is not an actionable
+                // message so 'warning' should be enough.
+                $this->getLogger()->warning('Encountered {count} error(s).', ['count' => $value]);
+            }
+        }
 
         return $processed;
     }

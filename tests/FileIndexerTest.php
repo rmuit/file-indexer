@@ -41,7 +41,6 @@ use Wyz\PathProcessor\PathRemover;
  */
 class FileIndexerTest extends TestCase
 {
-
     /**
      * Test database connection.
      *
@@ -78,462 +77,6 @@ class FileIndexerTest extends TestCase
     {
         self::$skipCaseInsensitiveTests = self::$skipCaseSensitiveTests = false;
         parent::setUpBeforeClass();
-    }
-
-    /**
-     * Creates any file structure for tests which don't care about sensitivity.
-     *
-     * @param bool $create_files
-     *   If true, create example file structure too.
-     *
-     * @return array
-     *   Two-element array: the directory created, and a boolean indicating
-     *   whether it's case insensitive.
-     */
-    protected function createAnyFileStructure($create_files)
-    {
-        $case_insensitive_fs = false;
-        $work_dir = $create_files ? $this->createCaseSensitiveFileStructure() : $this->createCaseSensitiveDir();
-        if (!$work_dir) {
-            $case_insensitive_fs = true;
-            $work_dir = $create_files ? $this->createCaseInsensitiveFileStructure() : $this->createCaseInsensitiveDir();
-            if (!$work_dir) {
-                throw new RuntimeException('Could not create any type of directory for the test.');
-            }
-        }
-
-        return [$work_dir, $case_insensitive_fs];
-    }
-
-    /**
-     * Creates file structure and indexer object to work on it.
-     *
-     * @param bool $create_files
-     *   If true, create example file structure too.
-     * @param array $extra_config
-     *   Any additional configuration to pass into the indexer. If
-     *   'base_directory' or 'allowed_base_directory' are set and relative,
-     *    they are interpreted as relative to the work dir, and expanded.
-     *
-     * @return \Wyz\PathProcessor\Tests\TestFileIndexer
-     *   Indexer set up for the file structure.
-     */
-    protected function createIndexerForAnyFileStructure($create_files, array $extra_config = [])
-    {
-        list($work_dir, $case_insensitive_fs) = $this->createAnyFileStructure($create_files);
-        $this->createDatabase(false, $case_insensitive_fs);
-        // These config keys are hardcoded and cannot be overridden.
-        $config = [
-            'pdo' => $this->pdo_connection,
-            'case_insensitive_filesystem' => $case_insensitive_fs,
-            'case_insensitive_database' => false,
-        ];
-        // Allowed base directory is required. Set from $extra_config if given.
-        if (isset($extra_config['allowed_base_directory'])) {
-            $config['allowed_base_directory'] = $extra_config['allowed_base_directory'][0] === '/'
-                ? $extra_config['allowed_base_directory'] : "$work_dir/{$extra_config['allowed_base_directory']}";
-        } else {
-            $config['allowed_base_directory'] = $work_dir;
-        }
-        // Base directory is optional.
-        if (isset($extra_config['base_directory'])) {
-            $config['base_directory'] = $extra_config['base_directory'][0] === '/'
-                ? $extra_config['base_directory'] : "$work_dir/{$extra_config['base_directory']}";
-            if (!file_exists($config['base_directory'])) {
-                mkdir($config['base_directory'], 0755);
-            }
-        }
-        $indexer = new TestFileIndexer(new TestLogger(), $config + $extra_config);
-
-        return $indexer;
-    }
-
-    /**
-     * Creates a directory which is supposed to be case sensitive.
-     *
-     * It should not exist yet; This method creates it and the test should
-     * remove it at the end. The base directory can be set in an environment
-     * variable (which means in phpcs.xml).
-     *
-     * @return string
-     *   Directory name if it is case sensitive; empty string if we don't have
-     *   a case sensitive directory to run tests on.
-     *
-     * @throws \RuntimeException
-     *   The directory cannot be created.
-     */
-    protected function createCaseSensitiveDir()
-    {
-        if (self::$skipCaseSensitiveTests) {
-            return '';
-        }
-
-        $work_dir = !empty($_ENV['TEST_DIR_CASE_SENSITIVE']) ? $_ENV['TEST_DIR_CASE_SENSITIVE'] : '/tmp';
-
-        // There's no PHP native call to create a temporary directory, so we'll
-        // first create a file, then remove it and quickly replace it by a
-        // directory, assuming that the name won't get reused.
-        $tmp_file = tempnam($work_dir, 'fileindexertest');
-        $path_components = explode(DIRECTORY_SEPARATOR, $tmp_file);
-        $filename = array_pop($path_components);
-        array_push($path_components, ucfirst($filename));
-        $tmp_file_miscased = implode(DIRECTORY_SEPARATOR, $path_components);
-        // But first, try to check the file, also with a differently cased name.
-        // This should tell us whether the directory is case sensitive.
-        $stat = file_exists($tmp_file);
-        if (!$stat) {
-            throw new RuntimeException("Cannot stat temporary file $tmp_file; tests cannot run.");
-        }
-        $stat = file_exists($tmp_file_miscased);
-        unlink($tmp_file);
-        if ($stat) {
-            // The directory is NOT case sensitive.
-            self::$skipCaseSensitiveTests = true;
-            $tmp_file = '';
-        } else {
-            if (!mkdir($tmp_file)) {
-                throw new RuntimeException("Cannot create temporary directory $tmp_file; tests cannot run.");
-            }
-        }
-
-        return $tmp_file;
-    }
-
-    /**
-     * Creates a directory which is supposed to be case insensitive.
-     *
-     * It should not exist yet; This method creates it and the test should
-     * remove it at the end. The base directory can be set in an environment
-     * variable (which means in phpcs.xml).
-     *
-     * @return string
-     *   Directory name if it is case sensitive; empty string if we don't have
-     *   a case sensitive directory to run tests on.
-     *
-     * @throws \RuntimeException
-     *   The directory cannot be created.
-     */
-    protected function createCaseInsensitiveDir()
-    {
-        if (self::$skipCaseInsensitiveTests) {
-            return '';
-        }
-
-        $work_dir = !empty($_ENV['TEST_DIR_CASE_INSENSITIVE']) ? $_ENV['TEST_DIR_CASE_INSENSITIVE'] : '/tmp';
-
-        // There's no PHP native call to create a temporary directory, so we'll
-        // first create a file, then remove it and quickly replace it by a
-        // directory, assuming that the name won't get reused.
-        $tmp_file = tempnam($work_dir, 'fileindexertest');
-        $path_components = explode(DIRECTORY_SEPARATOR, $tmp_file);
-        $filename = array_pop($path_components);
-        array_push($path_components, ucfirst($filename));
-        $tmp_file_miscased = implode(DIRECTORY_SEPARATOR, $path_components);
-        // But first, try to stat the file, also with a differently cased name.
-        // This should tell us whether the directory is case sensitive.
-        $stat = file_exists($tmp_file);
-        if (!$stat) {
-            throw new RuntimeException("Cannot stat temporary file $tmp_file; tests cannot run.");
-        }
-        $stat = file_exists($tmp_file_miscased);
-        unlink($tmp_file);
-        if (!$stat) {
-            // The directory is NOT case insensitive.
-            self::$skipCaseInsensitiveTests = true;
-            $tmp_file = '';
-        } else {
-            if (!mkdir($tmp_file)) {
-                throw new RuntimeException("Cannot create temporary directory $tmp_file; tests cannot run.");
-            }
-        }
-
-        return $tmp_file;
-    }
-
-
-    /**
-     * Create a database / table(s).
-     *
-     * If the database already exists, table is dropped and recreated.
-     *
-     * @param bool $case_insensitive
-     *   True if the dir/filename columns should be case insensitive.
-     * @param bool $for_case_insensitive_fs
-     *   True if the file system it is going to be used for, is also case
-     *   insensitive.
-     */
-    protected function createDatabase($case_insensitive, $for_case_insensitive_fs)
-    {
-        // Set up an SQLite database for testing, once before running all tests.
-        // This is usually an in-memory database; we don't remove the file
-        // afterwards.
-        if (empty($this->pdo_connection)) {
-            if (!empty($_ENV['FILE_INDEXER_TEST_DB_FILE'])) {
-                $this->pdo_connection = new PDO('sqlite:' . tempnam('/tmp', 'fileindexertestdb'));
-            } else {
-                $this->pdo_connection = new PDO('sqlite::memory:');
-            }
-        }
-
-        // File-based databases can get preserved over separate test runs (i.e.
-        // also if $this->pdo_connection did not exist yet), so always try to
-        // drop the table.
-        $this->pdo_connection->exec('DROP TABLE file');
-        $sensitivity = $case_insensitive ? ' COLLATE NOCASE' : '';
-        $this->pdo_connection->exec("CREATE TABLE IF NOT EXISTS file (
-          fid            INTEGER PRIMARY KEY,
-          dir            TEXT    NOT NULL$sensitivity,
-          filename       TEXT    NOT NULL$sensitivity,
-          sha1           TEXT    NOT NULL,
-          UNIQUE (dir, filename) ON CONFLICT ABORT);");
-        $this->pdo_connection->exec('CREATE INDEX sha1 ON file (sha1)');
-
-        // In SQLite we need to set case sensitive behavior of LIKE
-        // globally (which is off by default apparently).
-        if (!$case_insensitive && !$for_case_insensitive_fs) {
-            $this->pdo_connection->exec('PRAGMA case_sensitive_like=ON');
-        } else {
-            // Better be sure it didn't stay case sensitive from last time.
-            $this->pdo_connection->exec('PRAGMA case_sensitive_like=OFF');
-        }
-    }
-
-    /**
-     * Fetches contents of the database table.
-     *
-     * @return array[]
-     *   Array of numerically indexed records containing 'dir', 'filename' and
-     *   'sha1' keys.
-     */
-    protected function getDatabaseContents()
-    {
-        $statement = $this->pdo_connection->prepare('SELECT dir,filename,sha1 FROM file');
-        if (!$statement) {
-            // This is very unexpected; no details logged so far.
-            throw new RuntimeException('Database statement execution failed.');
-        }
-        $ret = $statement->execute();
-        if (!$ret) {
-            // This is very unexpected; no details logged so far.
-            throw new RuntimeException('Database statement execution failed.');
-        }
-        return $statement->fetchAll(PDO::FETCH_ASSOC);
-    }
-
-    /**
-     * Asserts that the database contents are equal to an array, after sorting.
-     *
-     * @param array $expected
-     *   The expected value, except keys are 0,1,2 instead of dir/filename/sha,
-     *   for easier input / reading.
-     */
-    protected function assertDatabaseContents(array $expected)
-    {
-        $database_contents = $this->getDatabaseContents();
-        sort($database_contents);
-        $compare = [];
-        foreach ($expected as $value) {
-            $this->assertIsArray($value);
-            $this->assertEquals(3, count($value), 'Sub-array for database contents comparison has wrong amount of elements.');
-            $compare[] = ['dir' => $value[0], 'filename' => $value[1], 'sha1' => $value[2]];
-        }
-        sort($compare);
-        $this->assertEquals($compare, $database_contents);
-    }
-
-    /**
-     * Asserts that messages logged are equal to a given array.
-     *
-     * @param array $expected
-     *   Expected log messages in the form of "LEVEL: message"
-     * @param TestLogger $logger
-     *   A logger instance which contains the logged messages.
-     */
-    protected function assertLogs(array $expected, TestLogger $logger)
-    {
-        $logs = [];
-        foreach ($logger->records as $record) {
-            $message = $record['message'];
-            foreach ($record['context'] as $key => $value) {
-                $message = str_replace('{' . $key. '}', $value, $message);
-            }
-            $logs[] = "{$record['level']}: $message";
-        }
-        $this->assertEquals($expected, $logs);
-    }
-
-    /**
-     * Quick helper method: reindexes stuff, compares database and logs.
-     *
-     * @param \Wyz\PathProcessor\FileIndexer $indexer
-     * @param array $process_paths
-     * @param array $expected_database_contents
-     * @param array $expected_logs
-     */
-    public function indexAndAssert(FileIndexer $indexer, array $process_paths, array $expected_database_contents, array $expected_logs)
-    {
-        /** @var TestLogger $logger */
-        $logger = $indexer->getLogger();
-        $logger->records = [];
-        $indexer->processPaths($process_paths);
-        $this->assertLogs($expected_logs, $logger);
-        $this->assertDatabaseContents($expected_database_contents);
-    }
-
-    /**
-     * Creates some files for doing tests on a case sensitive file system.
-     *
-     * The callers assume knowledge about the created file structure, so we
-     * can't just change it. It's just split into its own function for reuse.
-     *
-     * @return string
-     *   Base directory name if all files were created. Empty string if
-     *   creation was not attempted.
-     *
-     * @throws \RuntimeException
-     *   Not all files could be created.
-     */
-    protected function createCaseSensitiveFileStructure() {
-        $dir = $this->createCaseSensitiveDir();
-        if (!$dir) {
-            return '';
-        }
-
-        // Create:
-        // - AA  (empty file)
-        // - AB  (empty file)
-        // - aa/BB: symlink to bb/cc/AA
-        // - aa/bb/cc/AA
-        // - aa/bb/cc/aa
-        foreach (['AA', 'AB'] as $file) {
-            $fp = fopen("$dir/$file", 'w');
-        }
-        fclose($fp);
-        foreach (['aa', 'aa/bb', 'aa/bb/cc'] as $subdir) {
-            mkdir("$dir/$subdir");
-        }
-        $fp = fopen("$dir/aa/bb/cc/AA", 'w');
-        fwrite($fp, 'hi');
-        fclose($fp);
-        $fp = fopen("$dir/aa/bb/cc/aa", 'w');
-        fwrite($fp, 'hello world');
-        fclose($fp);
-        // We might continue if the file system can't handle symlinks because
-        // it's only going to report an error anyway, not test functionality.
-        // But is it worth it? Are there still non-symlink-supporting FSes?
-        symlink('bb/cc/AA', "$dir/aa/BB");
-
-        return $dir;
-    }
-
-    /**
-     * Creates some files for doing tests on a case insensitive file system.
-     *
-     * The callers assume knowledge about the created file structure, so we
-     * can't just change it. It's just split into its own function for reuse /
-     * comparison with createCaseSensitiveFileStructure().
-     *
-     * @return string
-     *   Base directory name if all files were created. Empty string if
-     *   creation was not attempted.
-     *
-     * @throws \RuntimeException
-     *   Not all files could be created.
-     */
-    protected function createCaseInsensitiveFileStructure() {
-        $dir = $this->createCaseInSensitiveDir();
-        if (!$dir) {
-            return '';
-        }
-
-        // Create:
-        // - AB  (empty file)
-        // - aa/BX: symlink to bb/cc/AA
-        // - aa/bb/cc/AA
-        // (Less and differently named files than case sensitive dir, because
-        // there's less to test.)
-        $fp = fopen("$dir/AB", 'w');
-        fclose($fp);
-        foreach (['aa', 'aa/bb', 'aa/bb/cc'] as $subdir) {
-            mkdir("$dir/$subdir");
-        }
-        $fp = fopen("$dir/aa/bb/cc/AA", 'w');
-        fwrite($fp, "hi");
-        fclose($fp);
-        // We might continue if the file system can't handle symlinks because
-        // it's only going to report an error anyway, not test functionality.
-        // But is it worth it? Are there still non-symlink-supporting FSes?
-        symlink('bb/cc/AA', "$dir/aa/BX");
-
-        return $dir;
-    }
-
-    /**
-     * Removes a directory recursively and removes all indexed database records.
-     *
-     * Call this after a test which created a directory, is done.
-     *
-     * @param $work_dir
-     */
-    protected function removeFiles($work_dir) {
-        // Remove the directory after the test, and clean database table.
-        $logger = new TestLogger();
-        $processor = new PathRemover($logger);
-        $processor->processPaths([$work_dir]);
-        // Do various duplicate checks on whether there were no errors. (We
-        // expect errors to be noted in the 'errors' state as well as in logs,
-        // but we'll test both.) It's disputable whether encountering an error
-        // here means that a FileIndexer test should fail... but we will fail
-        // it anyway.
-        $errors = $processor->getState('errors');
-        // 'warnings' does not exist but it might in the future.
-        $warnings = $processor->getState('warnings');
-        $logs = array_diff_key($logger->recordsByLevel, ['debug' => true, 'info' => true, 'notice' => true]);
-        if ($errors || $warnings || $logs) {
-            $description = "$errors error(s)" . ($warnings ? ", $warnings warning(s)" : '')
-                . ' encountered by file cleanup: ' . $this->varToString($logs);
-            throw new RuntimeException($description);
-        }
-        if (file_exists($work_dir)) {
-            throw new RuntimeException("PathRemover did not completely remove $work_dir.");
-        }
-
-        $this->pdo_connection->exec("DELETE FROM file;");
-    }
-
-    /**
-     * Returns a string representation of a variable.
-     *
-     * @param mixed $var
-     *   The variable.
-     * @param bool $represent_scalar_type
-     *   (Optional) If true, make sure to distinguish strings / ints / null.
-     *
-     * @return string
-     *   Some string representation.
-     */
-    private static function varToString($var, $represent_scalar_type = false)
-    {
-        if (is_object($var) && method_exists($var, "__toString")) {
-            // This is especially relevant for an 'exception' context value.
-            // Also if $inline == True, we still prefer to properly convert to
-            // a string instead of bluntly JSON-encoding, if the class says it
-            // can do it.
-            return (string)$var;
-        }
-        // Plain string does not show the difference between numeric strings
-        // and numbers. For inline insertion as placeholders in messages we
-        // often don't need that.
-        if (is_scalar($var) && !$represent_scalar_type) {
-            return (string)$var;
-        }
-        // JSON is the smallest array/object representation we have. We don't
-        // have other 'inline' representations, so use it, at the risk of not
-        // properly representing certain objects.
-        if (function_exists('json_encode')) {
-            return json_encode($var);
-        }
-        return str_replace("\n", '', var_export($var, true));
     }
 
     /**
@@ -693,19 +236,21 @@ class FileIndexerTest extends TestCase
         // 2a. Absolute paths, or relative paths involving '..', where '..'
         // itself cannot be processed.
         $this->indexAndAssert($indexer, ["$path_to_work_dir/subdir"], $database_contents, array_merge(
-            $set_base_dir ? [] : ["debug: Processing '$work_dir/cwd/../subdir' as '$work_dir/subdir'."], [
-            // We're removing the ones indexed by the previous set of tests.
-            "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory 'subdir'.",
-            "info: Added 2 new file(s).",
-        ]));
+            $set_base_dir ? [] : ["debug: Processing '$work_dir/cwd/../subdir' as '$work_dir/subdir'."],
+            [
+                // We're removing the ones indexed by the previous set of tests.
+                "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory 'subdir'.",
+                "info: Added 2 new file(s).",
+            ]
+        ));
         $this->indexAndAssert($indexer, ["$path_to_work_dir/subdir/subsub/file"], $database_contents, array_merge(
             $set_base_dir ? [] : ["debug: Processing '$work_dir/cwd/../subdir/subsub/file' as '$work_dir/subdir/subsub/file'."],
             ["info: Skipped 1 already indexed file(s)."]
         ));
         $this->indexAndAssert($indexer, [$path_to_work_dir], $database_contents, array_merge(
-            $set_base_dir ? [] : ["debug: Processing '$work_dir/cwd/..' as '$work_dir'."], [
-            "error: '$work_dir' is not inside an allowed base directory.",
-        ]));
+            $set_base_dir ? [] : ["debug: Processing '$work_dir/cwd/..' as '$work_dir'."],
+            ["error: '$work_dir' is not inside an allowed base directory."]
+        ));
         // 2b. Various incarnations of files relative from $work_dir.
         if (!$set_base_dir) {
             chdir($work_dir);
@@ -879,7 +424,14 @@ class FileIndexerTest extends TestCase
         // sensitive file system, this should 'move' the file - and combined
         // with a case sensitive database, this should be reflected in the db.
         // (Can't be done if either file system or database is case sensitive.)
-        $database_contents = $this->doTestCheckIndexedRecordsNonexistentInDir($work_dir, $indexer, $indexer_remove, $database_contents, 'aa/bb/cc/AA', 'Aa', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42',
+        $database_contents = $this->doTestCheckIndexedRecordsNonexistentInDir(
+            $work_dir,
+            $indexer,
+            $indexer_remove,
+            $database_contents,
+            'aa/bb/cc/AA',
+            'Aa',
+            'c22b5f9178342609428d6f51b2c5af4c0bde6a42',
             // 'aa' gets found and skipped.
             'info: Skipped 1 already indexed file(s).'
         );
@@ -1277,7 +829,7 @@ class FileIndexerTest extends TestCase
         // bB/cC/AB and bb/cc/AX for extra test of point 0.
         copy("$work_dir/AB", "$work_dir/aa/bb/cc/AB");
         $database_contents[] = ['aA/bB/cC', 'AB', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42']; // hi
-        $this->doTestCheckIndexedRecordsInNonexistentSubdirs($work_dir, $indexer, $indexer_remove, $database_contents, 'aA/bb/cc', 'cc', 'aa/cc','aA/bB/cC/AB', 'cC', 'bB');
+        $this->doTestCheckIndexedRecordsInNonexistentSubdirs($work_dir, $indexer, $indexer_remove, $database_contents, 'aA/bb/cc', 'cc', 'aa/cc', 'aA/bB/cC/AB', 'cC', 'bB');
 
         // Test warning/removal of an entry for a file that is now a directory
         // with the same name.
@@ -1345,7 +897,7 @@ class FileIndexerTest extends TestCase
      * @param $dir
      *   Sub dir within the case insensitive base dir, to create files.
      */
-    function doTestDeduplicateRecordsCaseInsensitive($dir)
+    private function doTestDeduplicateRecordsCaseInsensitive($dir)
     {
         // Create fresh directory structure.
         $work_dir = $this->createCaseInSensitiveDir();
@@ -1444,7 +996,7 @@ class FileIndexerTest extends TestCase
      * @return array[]
      *   The modified database contents.
      */
-    function doTestReindexContents($work_dir, $indexer, $indexer_reindex, $database_contents, $copy_from, $copy_to, $new_hash, $index_in_contents, $test_reindex_message = true)
+    private function doTestReindexContents($work_dir, $indexer, $indexer_reindex, $database_contents, $copy_from, $copy_to, $new_hash, $index_in_contents, $test_reindex_message = true)
     {
         // Change a file's contents and then reindex it - by copying. (There is
         // no difference here in whether it's a singular file or part of a
@@ -1519,7 +1071,7 @@ class FileIndexerTest extends TestCase
             return $element !== [$test_dir, $old_file, $file_hash];
         });
         $skip = array_filter($database_contents, function ($record) use ($reindex_dir) {
-           return $record[0] === $reindex_dir || strpos($record[0], "$reindex_dir/") === 0;
+            return $record[0] === $reindex_dir || strpos($record[0], "$reindex_dir/") === 0;
         });
         $skipped = count($skip);
         $this->indexAndAssert($indexer_remove, ["$work_dir/$reindex_dir"], $database_contents, [
@@ -1752,7 +1304,7 @@ class FileIndexerTest extends TestCase
             ];
         } else {
             $database_contents = array_filter($extra_indexed_records, function ($record) use ($new_moved_dir) {
-               return $record[0] === $new_moved_dir || strpos($record[0], "$new_moved_dir/") === 0;
+                return $record[0] === $new_moved_dir || strpos($record[0], "$new_moved_dir/") === 0;
             });
         }
         $database_contents[] = [$tmp_dir, basename($new_file), $oldnewfile_hash];
@@ -1849,15 +1401,461 @@ class FileIndexerTest extends TestCase
         $this->indexAndAssert($indexer_remove, [$work_dir], $database_contents, $logs);
     }
 
+    /**
+     * Creates any file structure for tests which don't care about sensitivity.
+     *
+     * @param bool $create_files
+     *   If true, create example file structure too.
+     *
+     * @return array
+     *   Two-element array: the directory created, and a boolean indicating
+     *   whether it's case insensitive.
+     */
+    protected function createAnyFileStructure($create_files)
+    {
+        $case_insensitive_fs = false;
+        $work_dir = $create_files ? $this->createCaseSensitiveFileStructure() : $this->createCaseSensitiveDir();
+        if (!$work_dir) {
+            $case_insensitive_fs = true;
+            $work_dir = $create_files ? $this->createCaseInsensitiveFileStructure() : $this->createCaseInsensitiveDir();
+            if (!$work_dir) {
+                throw new RuntimeException('Could not create any type of directory for the test.');
+            }
+        }
 
+        return [$work_dir, $case_insensitive_fs];
+    }
 
+    /**
+     * Creates file structure and indexer object to work on it.
+     *
+     * @param bool $create_files
+     *   If true, create example file structure too.
+     * @param array $extra_config
+     *   Any additional configuration to pass into the indexer. If
+     *   'base_directory' or 'allowed_base_directory' are set and relative,
+     *    they are interpreted as relative to the work dir, and expanded.
+     *
+     * @return \Wyz\PathProcessor\Tests\TestFileIndexer
+     *   Indexer set up for the file structure.
+     */
+    protected function createIndexerForAnyFileStructure($create_files, array $extra_config = [])
+    {
+        list($work_dir, $case_insensitive_fs) = $this->createAnyFileStructure($create_files);
+        $this->createDatabase(false, $case_insensitive_fs);
+        // These config keys are hardcoded and cannot be overridden.
+        $config = [
+            'pdo' => $this->pdo_connection,
+            'case_insensitive_filesystem' => $case_insensitive_fs,
+            'case_insensitive_database' => false,
+        ];
+        // Allowed base directory is required. Set from $extra_config if given.
+        if (isset($extra_config['allowed_base_directory'])) {
+            $config['allowed_base_directory'] = $extra_config['allowed_base_directory'][0] === '/'
+                ? $extra_config['allowed_base_directory'] : "$work_dir/{$extra_config['allowed_base_directory']}";
+        } else {
+            $config['allowed_base_directory'] = $work_dir;
+        }
+        // Base directory is optional.
+        if (isset($extra_config['base_directory'])) {
+            $config['base_directory'] = $extra_config['base_directory'][0] === '/'
+                ? $extra_config['base_directory'] : "$work_dir/{$extra_config['base_directory']}";
+            if (!file_exists($config['base_directory'])) {
+                mkdir($config['base_directory'], 0755);
+            }
+        }
+        $indexer = new TestFileIndexer(new TestLogger(), $config + $extra_config);
 
-// @TODO set the 'LIKE pragma' where you shouldn't (and the other way around),
-//  and see if you get errors.
-//@todo tests for running with a file indexer with the wrong case sensitivity settings,
-//  check if it at least gives 'normal' errors?
-//  (Maybe I'm just throwing  "Database statement execution failed." in my code. I've seen
-//  that when running the first part of FileSDbI with insensitive=false.)
-//  ^<-- this should result in docs which say how important it is to get those configs right
-//     (and, I guess, note that the 2 defaults are different.)
+        return $indexer;
+    }
+
+    /**
+     * Creates a directory which is supposed to be case sensitive.
+     *
+     * It should not exist yet; This method creates it and the test should
+     * remove it at the end. The base directory can be set in an environment
+     * variable (which means in phpcs.xml).
+     *
+     * @return string
+     *   Directory name if it is case sensitive; empty string if we don't have
+     *   a case sensitive directory to run tests on.
+     *
+     * @throws \RuntimeException
+     *   The directory cannot be created.
+     */
+    protected function createCaseSensitiveDir()
+    {
+        if (self::$skipCaseSensitiveTests) {
+            return '';
+        }
+
+        $work_dir = !empty($_ENV['TEST_DIR_CASE_SENSITIVE']) ? $_ENV['TEST_DIR_CASE_SENSITIVE'] : '/tmp';
+
+        // There's no PHP native call to create a temporary directory, so we'll
+        // first create a file, then remove it and quickly replace it by a
+        // directory, assuming that the name won't get reused.
+        $tmp_file = tempnam($work_dir, 'fileindexertest');
+        $path_components = explode(DIRECTORY_SEPARATOR, $tmp_file);
+        $filename = array_pop($path_components);
+        array_push($path_components, ucfirst($filename));
+        $tmp_file_miscased = implode(DIRECTORY_SEPARATOR, $path_components);
+        // But first, try to check the file, also with a differently cased name.
+        // This should tell us whether the directory is case sensitive.
+        $stat = file_exists($tmp_file);
+        if (!$stat) {
+            throw new RuntimeException("Cannot stat temporary file $tmp_file; tests cannot run.");
+        }
+        $stat = file_exists($tmp_file_miscased);
+        unlink($tmp_file);
+        if ($stat) {
+            // The directory is NOT case sensitive.
+            self::$skipCaseSensitiveTests = true;
+            $tmp_file = '';
+        } else {
+            if (!mkdir($tmp_file)) {
+                throw new RuntimeException("Cannot create temporary directory $tmp_file; tests cannot run.");
+            }
+        }
+
+        return $tmp_file;
+    }
+
+    /**
+     * Creates a directory which is supposed to be case insensitive.
+     *
+     * It should not exist yet; This method creates it and the test should
+     * remove it at the end. The base directory can be set in an environment
+     * variable (which means in phpcs.xml).
+     *
+     * @return string
+     *   Directory name if it is case sensitive; empty string if we don't have
+     *   a case sensitive directory to run tests on.
+     *
+     * @throws \RuntimeException
+     *   The directory cannot be created.
+     */
+    protected function createCaseInsensitiveDir()
+    {
+        if (self::$skipCaseInsensitiveTests) {
+            return '';
+        }
+
+        $work_dir = !empty($_ENV['TEST_DIR_CASE_INSENSITIVE']) ? $_ENV['TEST_DIR_CASE_INSENSITIVE'] : '/tmp';
+
+        // There's no PHP native call to create a temporary directory, so we'll
+        // first create a file, then remove it and quickly replace it by a
+        // directory, assuming that the name won't get reused.
+        $tmp_file = tempnam($work_dir, 'fileindexertest');
+        $path_components = explode(DIRECTORY_SEPARATOR, $tmp_file);
+        $filename = array_pop($path_components);
+        array_push($path_components, ucfirst($filename));
+        $tmp_file_miscased = implode(DIRECTORY_SEPARATOR, $path_components);
+        // But first, try to stat the file, also with a differently cased name.
+        // This should tell us whether the directory is case sensitive.
+        $stat = file_exists($tmp_file);
+        if (!$stat) {
+            throw new RuntimeException("Cannot stat temporary file $tmp_file; tests cannot run.");
+        }
+        $stat = file_exists($tmp_file_miscased);
+        unlink($tmp_file);
+        if (!$stat) {
+            // The directory is NOT case insensitive.
+            self::$skipCaseInsensitiveTests = true;
+            $tmp_file = '';
+        } else {
+            if (!mkdir($tmp_file)) {
+                throw new RuntimeException("Cannot create temporary directory $tmp_file; tests cannot run.");
+            }
+        }
+
+        return $tmp_file;
+    }
+
+    /**
+     * Create a database / table(s).
+     *
+     * If the database already exists, table is dropped and recreated.
+     *
+     * @param bool $case_insensitive
+     *   True if the dir/filename columns should be case insensitive.
+     * @param bool $for_case_insensitive_fs
+     *   True if the file system it is going to be used for, is also case
+     *   insensitive.
+     */
+    protected function createDatabase($case_insensitive, $for_case_insensitive_fs)
+    {
+        // Set up an SQLite database for testing, once before running all tests.
+        // This is usually an in-memory database; we don't remove the file
+        // afterwards.
+        if (empty($this->pdo_connection)) {
+            if (!empty($_ENV['FILE_INDEXER_TEST_DB_FILE'])) {
+                $this->pdo_connection = new PDO('sqlite:' . tempnam('/tmp', 'fileindexertestdb'));
+            } else {
+                $this->pdo_connection = new PDO('sqlite::memory:');
+            }
+        }
+
+        // File-based databases can get preserved over separate test runs (i.e.
+        // also if $this->pdo_connection did not exist yet), so always try to
+        // drop the table.
+        $this->pdo_connection->exec('DROP TABLE file');
+        $sensitivity = $case_insensitive ? ' COLLATE NOCASE' : '';
+        $this->pdo_connection->exec("CREATE TABLE IF NOT EXISTS file (
+          fid            INTEGER PRIMARY KEY,
+          dir            TEXT    NOT NULL$sensitivity,
+          filename       TEXT    NOT NULL$sensitivity,
+          sha1           TEXT    NOT NULL,
+          UNIQUE (dir, filename) ON CONFLICT ABORT);");
+        $this->pdo_connection->exec('CREATE INDEX sha1 ON file (sha1)');
+
+        // In SQLite we need to set case sensitive behavior of LIKE
+        // globally (which is off by default apparently).
+        if (!$case_insensitive && !$for_case_insensitive_fs) {
+            $this->pdo_connection->exec('PRAGMA case_sensitive_like=ON');
+        } else {
+            // Better be sure it didn't stay case sensitive from last time.
+            $this->pdo_connection->exec('PRAGMA case_sensitive_like=OFF');
+        }
+    }
+
+    /**
+     * Fetches contents of the database table.
+     *
+     * @return array[]
+     *   Array of numerically indexed records containing 'dir', 'filename' and
+     *   'sha1' keys.
+     */
+    protected function getDatabaseContents()
+    {
+        $statement = $this->pdo_connection->prepare('SELECT dir,filename,sha1 FROM file');
+        if (!$statement) {
+            // This is very unexpected; no details logged so far.
+            throw new RuntimeException('Database statement execution failed.');
+        }
+        $ret = $statement->execute();
+        if (!$ret) {
+            // This is very unexpected; no details logged so far.
+            throw new RuntimeException('Database statement execution failed.');
+        }
+        return $statement->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * Asserts that the database contents are equal to an array, after sorting.
+     *
+     * @param array $expected
+     *   The expected value, except keys are 0,1,2 instead of dir/filename/sha,
+     *   for easier input / reading.
+     */
+    protected function assertDatabaseContents(array $expected)
+    {
+        $database_contents = $this->getDatabaseContents();
+        sort($database_contents);
+        $compare = [];
+        foreach ($expected as $value) {
+            $this->assertIsArray($value);
+            $this->assertEquals(3, count($value), 'Sub-array for database contents comparison has wrong amount of elements.');
+            $compare[] = ['dir' => $value[0], 'filename' => $value[1], 'sha1' => $value[2]];
+        }
+        sort($compare);
+        $this->assertEquals($compare, $database_contents);
+    }
+
+    /**
+     * Asserts that messages logged are equal to a given array.
+     *
+     * @param array $expected
+     *   Expected log messages in the form of "LEVEL: message"
+     * @param TestLogger $logger
+     *   A logger instance which contains the logged messages.
+     */
+    protected function assertLogs(array $expected, TestLogger $logger)
+    {
+        $logs = [];
+        foreach ($logger->records as $record) {
+            $message = $record['message'];
+            foreach ($record['context'] as $key => $value) {
+                $message = str_replace('{' . $key . '}', $value, $message);
+            }
+            $logs[] = "{$record['level']}: $message";
+        }
+        $this->assertEquals($expected, $logs);
+    }
+
+    /**
+     * Quick helper method: reindexes stuff, compares database and logs.
+     *
+     * @param \Wyz\PathProcessor\FileIndexer $indexer
+     * @param array $process_paths
+     * @param array $expected_database_contents
+     * @param array $expected_logs
+     */
+    public function indexAndAssert(FileIndexer $indexer, array $process_paths, array $expected_database_contents, array $expected_logs)
+    {
+        /** @var TestLogger $logger */
+        $logger = $indexer->getLogger();
+        $logger->records = [];
+        $indexer->processPaths($process_paths);
+        $this->assertLogs($expected_logs, $logger);
+        $this->assertDatabaseContents($expected_database_contents);
+    }
+
+    /**
+     * Creates some files for doing tests on a case sensitive file system.
+     *
+     * The callers assume knowledge about the created file structure, so we
+     * can't just change it. It's just split into its own function for reuse.
+     *
+     * @return string
+     *   Base directory name if all files were created. Empty string if
+     *   creation was not attempted.
+     *
+     * @throws \RuntimeException
+     *   Not all files could be created.
+     */
+    protected function createCaseSensitiveFileStructure()
+    {
+        $dir = $this->createCaseSensitiveDir();
+        if (!$dir) {
+            return '';
+        }
+
+        // Create:
+        // - AA  (empty file)
+        // - AB  (empty file)
+        // - aa/BB: symlink to bb/cc/AA
+        // - aa/bb/cc/AA
+        // - aa/bb/cc/aa
+        foreach (['AA', 'AB'] as $file) {
+            $fp = fopen("$dir/$file", 'w');
+        }
+        fclose($fp);
+        foreach (['aa', 'aa/bb', 'aa/bb/cc'] as $subdir) {
+            mkdir("$dir/$subdir");
+        }
+        $fp = fopen("$dir/aa/bb/cc/AA", 'w');
+        fwrite($fp, 'hi');
+        fclose($fp);
+        $fp = fopen("$dir/aa/bb/cc/aa", 'w');
+        fwrite($fp, 'hello world');
+        fclose($fp);
+        // We might continue if the file system can't handle symlinks because
+        // it's only going to report an error anyway, not test functionality.
+        // But is it worth it? Are there still non-symlink-supporting FSes?
+        symlink('bb/cc/AA', "$dir/aa/BB");
+
+        return $dir;
+    }
+
+    /**
+     * Creates some files for doing tests on a case insensitive file system.
+     *
+     * The callers assume knowledge about the created file structure, so we
+     * can't just change it. It's just split into its own function for reuse /
+     * comparison with createCaseSensitiveFileStructure().
+     *
+     * @return string
+     *   Base directory name if all files were created. Empty string if
+     *   creation was not attempted.
+     *
+     * @throws \RuntimeException
+     *   Not all files could be created.
+     */
+    protected function createCaseInsensitiveFileStructure()
+    {
+        $dir = $this->createCaseInSensitiveDir();
+        if (!$dir) {
+            return '';
+        }
+
+        // Create:
+        // - AB  (empty file)
+        // - aa/BX: symlink to bb/cc/AA
+        // - aa/bb/cc/AA
+        // (Less and differently named files than case sensitive dir, because
+        // there's less to test.)
+        $fp = fopen("$dir/AB", 'w');
+        fclose($fp);
+        foreach (['aa', 'aa/bb', 'aa/bb/cc'] as $subdir) {
+            mkdir("$dir/$subdir");
+        }
+        $fp = fopen("$dir/aa/bb/cc/AA", 'w');
+        fwrite($fp, "hi");
+        fclose($fp);
+        // We might continue if the file system can't handle symlinks because
+        // it's only going to report an error anyway, not test functionality.
+        // But is it worth it? Are there still non-symlink-supporting FSes?
+        symlink('bb/cc/AA', "$dir/aa/BX");
+
+        return $dir;
+    }
+
+    /**
+     * Removes a directory recursively and removes all indexed database records.
+     *
+     * Call this after a test which created a directory, is done.
+     *
+     * @param $work_dir
+     */
+    protected function removeFiles($work_dir)
+    {
+        // Remove the directory after the test, and clean database table.
+        $logger = new TestLogger();
+        $processor = new PathRemover($logger);
+        $processor->processPaths([$work_dir]);
+        // Do various duplicate checks on whether there were no errors. (We
+        // expect errors to be noted in the 'errors' state as well as in logs,
+        // but we'll test both.) It's disputable whether encountering an error
+        // here means that a FileIndexer test should fail... but we will fail
+        // it anyway.
+        $errors = $processor->getState('errors');
+        // 'warnings' does not exist but it might in the future.
+        $warnings = $processor->getState('warnings');
+        $logs = array_diff_key($logger->recordsByLevel, ['debug' => true, 'info' => true, 'notice' => true]);
+        if ($errors || $warnings || $logs) {
+            $description = "$errors error(s)" . ($warnings ? ", $warnings warning(s)" : '')
+                . ' encountered by file cleanup: ' . $this->varToString($logs);
+            throw new RuntimeException($description);
+        }
+        if (file_exists($work_dir)) {
+            throw new RuntimeException("PathRemover did not completely remove $work_dir.");
+        }
+
+        $this->pdo_connection->exec("DELETE FROM file;");
+    }
+
+    /**
+     * Returns a string representation of a variable.
+     *
+     * @param mixed $var
+     *   The variable.
+     * @param bool $represent_scalar_type
+     *   (Optional) If true, make sure to distinguish strings / ints / null.
+     *
+     * @return string
+     *   Some string representation.
+     */
+    private static function varToString($var, $represent_scalar_type = false)
+    {
+        if (is_object($var) && method_exists($var, "__toString")) {
+            // This is especially relevant for an 'exception' context value.
+            // Also if $inline == True, we still prefer to properly convert to
+            // a string instead of bluntly JSON-encoding, if the class says it
+            // can do it.
+            return (string)$var;
+        }
+        // Plain string does not show the difference between numeric strings
+        // and numbers. For inline insertion as placeholders in messages we
+        // often don't need that.
+        if (is_scalar($var) && !$represent_scalar_type) {
+            return (string)$var;
+        }
+        // JSON is the smallest array/object representation we have. We don't
+        // have other 'inline' representations, so use it, at the risk of not
+        // properly representing certain objects.
+        if (function_exists('json_encode')) {
+            return json_encode($var);
+        }
+        return str_replace("\n", '', var_export($var, true));
+    }
 }

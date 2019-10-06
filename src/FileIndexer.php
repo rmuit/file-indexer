@@ -605,7 +605,8 @@ class FileIndexer extends SubpathProcessor
                 }
                 $dir_sql_expr = $this->modifySqlWhereExpr('dir');
                 $query_data = $this->dbCreateQueryParams($nonexistent_files_arg);
-                $deleted = $this->dbExecuteQuery("DELETE FROM {$this->config['table']} WHERE $dir_sql_expr = :d AND $filename_expr IN ("
+                $deleted = $this->dbExecuteQuery(
+                    "DELETE FROM {$this->config['table']} WHERE $dir_sql_expr = :d AND $filename_expr IN ("
                     . implode(', ', $query_data['placeholders']) . ')',
                     [':d' => $key_dir] + $query_data['parameters']
                 );
@@ -706,9 +707,9 @@ class FileIndexer extends SubpathProcessor
                     }
                     $deleted = $this->dbExecuteQuery("DELETE FROM {$this->config['table']} WHERE $dir_sql_expr = :thisdir OR "
                         . $this->dbLikeOperation('dir', ':subdir'), [
-                        ':thisdir' => $dir_arg,
-                        ':subdir' => $this->dbEscapeLike("$dir_arg/") . '%',
-                    ]);
+                            ':thisdir' => $dir_arg,
+                            ':subdir' => $this->dbEscapeLike("$dir_arg/") . '%',
+                        ]);
                     $this->getLogger()->info("Removed {count} indexed record(s) for file(s) in (subdirectories of) nonexistent directory '{dir}'.", [
                         'count' => $deleted,
                         'dir' => $this->concatenateRelativePath($this->getPathRelativeToAllowedBase($directory), $dir),
@@ -806,9 +807,9 @@ class FileIndexer extends SubpathProcessor
                 $dir_arg =  $this->concatenateRelativePath($key_dir, $key_file);
                 $deleted = $this->dbExecuteQuery("DELETE FROM {$this->config['table']} WHERE $dir_sql_expr = :thisdir OR "
                     . $this->dbLikeOperation('dir', ':subdir'), [
-                    ':thisdir' => $dir_arg,
-                    ':subdir' => $this->dbEscapeLike("$dir_arg/") . '%',
-                ]);
+                        ':thisdir' => $dir_arg,
+                        ':subdir' => $this->dbEscapeLike("$dir_arg/") . '%',
+                    ]);
                 $this->getLogger()->info("Removed {count} indexed record(s) with '{file}' (which is a file) as nonexistent base directory.", [
                     'count' => $deleted,
                     'file' => $relative_path,
@@ -913,7 +914,8 @@ class FileIndexer extends SubpathProcessor
      *   True if database records (dir / filename fields) are supposed to
      *   match filenames with varying case. False for case sensitive matching.
      */
-    protected function caseInsensitiveFileRecordMatching() {
+    protected function caseInsensitiveFileRecordMatching()
+    {
         return !empty($this->config['case_insensitive_filesystem']) || !empty($this->config['case_insensitive_database']);
     }
 
@@ -926,7 +928,8 @@ class FileIndexer extends SubpathProcessor
      * @return string
      *   The key, possibly modified.
      */
-    protected function modifyCacheKey($key) {
+    protected function modifyCacheKey($key)
+    {
         // The cache is used for matching files against cached database records,
         // so the case of the index string must be unified if either database
         // or file system is case insensitive. (Because in either case, a file
@@ -956,7 +959,8 @@ class FileIndexer extends SubpathProcessor
      * @return string
      *   The field name, possibly modified.
      */
-    protected function modifySqlWhereExpr($field) {
+    protected function modifySqlWhereExpr($field)
+    {
         if (!empty($this->config['case_insensitive_filesystem']) && empty($this->config['case_insensitive_database'])) {
             $field = "LOWER($field)";
         }
@@ -1003,7 +1007,8 @@ class FileIndexer extends SubpathProcessor
      * @return string
      *   Concatenated path.
      */
-    protected function concatenateRelativePath($base_dir, $sub_path) {
+    protected function concatenateRelativePath($base_dir, $sub_path)
+    {
         return $base_dir ? "$base_dir/$sub_path" : $sub_path;
     }
 
