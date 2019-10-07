@@ -92,7 +92,9 @@ class PathProcessor
                 // support setting this to a non-empty string, to distinguish
                 // various types of processing of symlinks.
                 'process_symlinks' => false,
-                // Reorder directory entries before processing them?
+                // Sort directory entries before processing them? If false, the
+                // order in which readdir() reads them is OS specific, if not
+                // user specific.
                 'sort_directory_entries' => false,
             ];
 

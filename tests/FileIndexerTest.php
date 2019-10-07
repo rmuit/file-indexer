@@ -74,7 +74,7 @@ class FileIndexerTest extends TestCase
      */
     protected static $skipCaseInsensitiveTests;
 
-    public static function setUpBeforeClass() : void
+    public static function setUpBeforeClass(): void
     {
         self::$skipCaseInsensitiveTests = self::$skipCaseSensitiveTests = false;
         parent::setUpBeforeClass();
@@ -373,6 +373,12 @@ class FileIndexerTest extends TestCase
             'pdo' => $this->pdo_connection,
             'allowed_base_directory' => $work_dir,
             'case_insensitive_database' => false,
+            // This is necessary because readdir() works differently on
+            // different systems: on standard Linux, readdir() reads lowercase
+            // letters before uppercase, while sort() puts all uppercase
+            // letters before the lowercase ones - just like MacOS does. At
+            // least one test is affected by this, so we unify.
+            'sort_directory_entries' => true,
         ];
         $indexer = new TestFileIndexer($logger, $indexer_default_config);
         $indexer_reindex = new TestFileIndexer($logger, $indexer_default_config + ['reindex_all' => true]);
@@ -498,6 +504,7 @@ class FileIndexerTest extends TestCase
         $indexer_default_config = [
             'pdo' => $this->pdo_connection,
             'allowed_base_directory' => $work_dir,
+            'sort_directory_entries' => true,
         ];
         $indexer = new TestFileIndexer($logger, $indexer_default_config);
         $indexer_reindex = new TestFileIndexer($logger, $indexer_default_config + ['reindex_all' => true]);
@@ -735,6 +742,7 @@ class FileIndexerTest extends TestCase
             'allowed_base_directory' => $work_dir,
             'case_insensitive_filesystem' => true,
             'case_insensitive_database' => $case_insensitive_database,
+            'sort_directory_entries' => true,
         ];
 
         $indexer = new TestFileIndexer($logger, $indexer_default_config);
@@ -1386,7 +1394,7 @@ class FileIndexerTest extends TestCase
             $tmp_dir = dirname($old_dir);
             $tmp_file = basename($old_dir);
             $unimportant_log = "warning: Indexed records exist for files in the following nonexistent subdirectories of directory '$tmp_dir': $tmp_file.";
-            array_splice($logs, $old_file_new_dir === 'AA' ? 1 : 0, 0, [$unimportant_log]);
+            array_splice($logs, 1, 0, [$unimportant_log]);
         }
         $this->indexAndAssert($indexer, [$work_dir], $database_contents, $logs);
 
@@ -1400,7 +1408,7 @@ class FileIndexerTest extends TestCase
         ];
         if ($rename) {
             $unimportant_log = "info: Removed 2 indexed record(s) for file(s) in (subdirectories of) nonexistent directory '$old_dir'.";
-            array_splice($logs, $old_file_new_dir === 'AA' ? 1 : 0, 0, [$unimportant_log]);
+            array_splice($logs, 1, 0, [$unimportant_log]);
         }
         $this->indexAndAssert($indexer_remove, [$work_dir], $database_contents, $logs);
     }
