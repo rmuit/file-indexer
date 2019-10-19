@@ -103,17 +103,18 @@ class FileIndexer extends SubpathProcessor
         if (isset($config['cache_fields']) && !is_array($config['cache_fields'])) {
             throw new RuntimeException("'cache_fields' config value must be a non-empty array.");
         }
-        // Default table name: 'file'.
-        if (empty($config['table'])) {
-            $config['table'] = 'file';
-        } elseif (!is_string($config['table'])) {
-            throw new RuntimeException("'table' config value must be a string (or empty).");
+        foreach (['table', 'hash_algo'] as $property_name) {
+            if (isset($config[$property_name]) && !is_string($config[$property_name])) {
+                throw new RuntimeException("'$property_name' config value must be a string (or empty).");
+            }
         }
 
         parent::__construct($logger, $config);
 
         // Default behavior of this class:
         $this->config += [
+            // Table name.
+            'table' => 'file',
             // Must be true if the 'dir' / 'filename' columns in the 'file'
             // table are case insensitive. Mysql tables are case insensitive
             // by default, so that's our default.
@@ -126,8 +127,11 @@ class FileIndexer extends SubpathProcessor
             // statement by itself, from the standpoint of not unexpectedly
             // changing behavior of outside code.)
             'case_insensitive_database' => true,
-            // Data to store for a file: SHA1 hash.
-            'cache_fields' => ['sha1'],
+            // Hardcoded requirement: the first 'cache_field' is the one which
+            // will store the hash.
+            'cache_fields' => ['sha256'],
+            // Hash algorithm to use.
+            'hash_algo' => 'sha256',
             // Do not reindex files if they're already in the database.
             'reindex_all' => false,
             // If some checks discover indexed records which do not correspond
@@ -962,7 +966,7 @@ class FileIndexer extends SubpathProcessor
         return $base_dir ? "$base_dir/$sub_path" : $sub_path;
     }
 
-    /// Action specific methods. Default index action is getting/storing sha1.
+    /// Action specific methods. Default index action is getting/storing hash.
     /// These are all abstracted out of processFile() for easy subclassing.
 
     /**
@@ -976,10 +980,11 @@ class FileIndexer extends SubpathProcessor
      */
     protected function getValuesToStore($filename)
     {
-        $hash = sha1_file($filename);
+        $hash = hash_file($this->config['hash_algo'], $filename);
         if ($hash) {
+            $field_name = reset($this->config['cache_fields']);
             $values = new stdClass();
-            $values->sha1 = $hash;
+            $values->$field_name = $hash;
         } else {
             $this->getLogger()->error("sha1_file error processing {file}!?", ['file' => $filename]);
             $values = null;
@@ -1018,7 +1023,8 @@ class FileIndexer extends SubpathProcessor
         }
 
         // We always have the values cached. If not, just return 'not equal'.
-        return $cached_values && $record->sha1 === $cached_values->sha1;
+        $field_name = reset($this->config['cache_fields']);
+        return $cached_values && $record->$field_name === $cached_values->$field_name;
     }
 
     /**

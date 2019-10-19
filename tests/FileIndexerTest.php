@@ -228,6 +228,8 @@ class FileIndexerTest extends TestCase
                 'case_insensitive_filesystem' => $indexer->getConfig('case_insensitive_filesystem'),
                 'case_insensitive_database' => false,
                 'remove_nonexistent_from_index' => true,
+                'cache_fields' => ['sha1'],
+                'hash_algo' => 'sha1',
             ] + $config);
         $database_contents = [
             ['', 'file', 'da39a3ee5e6b4b0d3255bfef95601890afd80709'], // empty
@@ -283,11 +285,11 @@ class FileIndexerTest extends TestCase
         // Use 'AB' which is created by above caller' ignore others.
         $work_dir = $indexer->getConfig('allowed_base_directory');
 
-        // Don't let PHPUnit bail out on the warning emitted by sha1_file().
+        // Don't let PHPUnit bail out on the warning emitted by hash_file().
         $this->expectException(Warning::class);
         chmod("$work_dir/AB", 0);
         $this->indexAndAssert($indexer, ["$work_dir/AB"], [], [
-            "error: sha1_file error processing $work_dir/AB!?",
+            "error: hash_file error processing $work_dir/AB!?",
             // If there's an indexing error (rather than an error that is
             // logged during file validation), there's a summary log at the end.
             "warning: Encountered 1 indexing error(s).",
@@ -335,6 +337,8 @@ class FileIndexerTest extends TestCase
             'case_insensitive_database' => false,
             'allowed_base_directory' => "$work_dir/subdir",
             'process_symlinks' => true,
+            'cache_fields' => ['sha1'],
+            'hash_algo' => 'sha1',
         ]);
         // To repeat: the stored dir is relateive to the _allowed_ base dir.
         chdir("$work_dir/subdir");
@@ -378,6 +382,8 @@ class FileIndexerTest extends TestCase
             // letters before the lowercase ones - just like MacOS does. At
             // least one test is affected by this, so we unify.
             'sort_directory_entries' => true,
+            'cache_fields' => ['sha1'],
+            'hash_algo' => 'sha1',
         ];
         $indexer = new TestFileIndexer($logger, $indexer_default_config);
         $indexer_reindex = new TestFileIndexer($logger, $indexer_default_config + ['reindex_all' => true]);
@@ -504,6 +510,8 @@ class FileIndexerTest extends TestCase
             'pdo' => $this->pdo_connection,
             'allowed_base_directory' => $work_dir,
             'sort_directory_entries' => true,
+            'cache_fields' => ['sha1'],
+            'hash_algo' => 'sha1',
         ];
         $indexer = new TestFileIndexer($logger, $indexer_default_config);
         $indexer_reindex = new TestFileIndexer($logger, $indexer_default_config + ['reindex_all' => true]);
@@ -745,6 +753,8 @@ class FileIndexerTest extends TestCase
             'case_insensitive_filesystem' => true,
             'case_insensitive_database' => $case_insensitive_database,
             'sort_directory_entries' => true,
+            'cache_fields' => ['sha1'],
+            'hash_algo' => 'sha1',
         ];
 
         $indexer = new TestFileIndexer($logger, $indexer_default_config);
@@ -924,6 +934,8 @@ class FileIndexerTest extends TestCase
             'allowed_base_directory' => $work_dir,
             'case_insensitive_filesystem' => true,
             'case_insensitive_database' => false,
+            'cache_fields' => ['sha1'],
+            'hash_algo' => 'sha1',
         ];
         $indexer = new TestFileIndexer($logger, $indexer_default_config);
 
@@ -1491,6 +1503,8 @@ class FileIndexerTest extends TestCase
             'pdo' => $this->pdo_connection,
             'case_insensitive_filesystem' => $case_insensitive_fs,
             'case_insensitive_database' => false,
+            'cache_fields' => ['sha1'],
+            'hash_algo' => 'sha1',
         ];
         // Allowed base directory is required. Set from $extra_config if given.
         if (isset($extra_config['allowed_base_directory'])) {
