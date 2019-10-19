@@ -25,11 +25,13 @@ This probably sounds like having this code already written, can save some hours
 of coding but other than that, isn't very noteworthy.
 
 The interesting thing comes from the existence of case insensitive file systems
-and database tables. The need to use file systems with different case
-sensitivity got me so confused about conditions I needed to check for, that I
-decided to write a class that can deal with all combinations of file system and
-database case sensitivity, which is unit tested to a point that I trust it to
-never do anything unexpected with stored data (like duplicate rows).
+and database tables, and varying handling of case sensitivity (by different
+database systems) by LIKE and CASE statements. The need to use systems with
+different case sensitivity got me so confused about conditions I needed to
+check for, that I decided to write a class that can deal with all combinations
+of file system and database case sensitivity, which is unit tested to a point
+that I trust it to never do anything unexpected with stored data (like ending
+up with duplicate rows).
 
 FileIndexer will make sure that if _either_ file system _or_ database is case
 insensitive, no two 'identical except for casing' files will be indexed
@@ -86,22 +88,38 @@ case, only one of them gets indexed.
 ### Using SQLite
 
 FileIndexer uses SQL queries that use a LIKE operator. For SQLite databases,
-case sensitivity of the LIKE operator is not tied to SQL statements but instead
-set connection-wide, using a PRAGMA statement. When using a case sensitive
-table _and_ a case sensitive file system, you must also execute the following
-in order for the code to be able to handle differently cased files:
+case sensitivity of the LIKE operator is not determined by the case sensitivity
+of the table or by a keyword in theSQL statements but instead set
+connection-wide, using a PRAGMA statement. When using a case sensitive table
+_and_ a case sensitive file system, you must also execute the following in
+order for the code to be able to handle differently cased files:
 ```sql
 PRAGMA case_sensitive_like=ON;
 ```
 The class doesn't do this by itself because it does not want to modify the
 database connection globally; this should be up to the caller.
 
-## Compatibility / testing
+## Compatibility
 
-Although PHP5.6 is officially End Of Life, I'll try to keep this code 
+The code has been tested against MySQL and SQLite databases; it uses PDO for
+working with databases.
+
+Making sure that case sensitivity is handled correctly by the database system,
+is outside of the scope of this code. For example: on SQLite without a certain
+extension installed, 'LIKE' operations will not match non-ASCII characters of
+varying case properly so the 'LIKE' operation is not truly case insensitive,
+which this code depends on if either the database or the file system is
+supposed to be case sensitive. This will cause issues when those non-ASCII
+characters are used with varying case in directory names, or when the case of
+directory names on disk does not match the case of the directory as indexed in
+the database.
+
+Although PHP5.6 is officially End Of Life, I'll try to keep this code
 compatible with it until there is a real reason to introduce PHP7-only language
 constructs. It's not tested on PHP5 though, because the unit tests are not
 compatible with PHPUnit 5.
+
+## Testing
 
 The tricky thing with PHPUnit tests is that they need both a case sensitive and
 a case insensitive file system, and these things cannot be emulated. So
@@ -112,7 +130,11 @@ be defined by setting the environment variables TEST_DIR_CASE_SENSITIVE and
 TEST_DIR_CASE_INSENSITIVE. Both will default to /tmp; either one of them will
 cause tests to be skipped when the actual case sensitivity is not as assumed.
 
+To run tests against a different database system than SQLite in memory, set
+FILE_INDEXER_TEST_PDO_DSN (to any valid PDO DSN), FILE_INDEXER_TEST_PDO_USER
+and FILE_INDEXER_TEST_PDO_PASS environment variables.
+
 Setting those environment variables may need phpunit to run with
 'php -d variables_order=EGPCS' in order to pick up their values. If you know a
 better way of defining these two directories dynamically by anyone who wants to
-run complete tests: feedback is welcome.
+run complete tests (or of overriding the PDO connection): feedback is welcome.

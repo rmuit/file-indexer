@@ -11,7 +11,6 @@ use Wyz\PathProcessor\FileIndexer;
 use Wyz\PathProcessor\PathProcessor;
 use Wyz\PathProcessor\PathRemover;
 
-
 /**
  * Test class for FileIndexer.
  *
@@ -693,6 +692,9 @@ class FileIndexerTest extends TestCase
             ['zz', 'x0', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
             ['zz/cC', 'x1', 'c22b5f9178342609428d6f51b2c5af4c0bde6a42'],
         ]);
+        // A note: by removing those first 4 records, the above test has also
+        // tested that a supposedly case sensitive LIKE operation is indeed
+        // truly case sensitive.
 
         $this->removeFiles($work_dir);
     }
@@ -1138,14 +1140,6 @@ class FileIndexerTest extends TestCase
         // 'very base' ($reindex_base) are different.
         $old_sub_base = dirname($old_subdir);
         $reindex_base = strstr($old_subdir, '/', true);
-        $nonexistent_subdirs = basename($old_subdir);
-        // $nonexistent_subdirs is usually like 'cc') but can also be 'cC, cc'.
-        if ($old_subdir_differently_indexed) {
-            $dirs = [$nonexistent_subdirs, $old_subdir_differently_indexed];
-            sort($dirs);
-            $nonexistent_subdirs = implode(', ', $dirs);
-        }
-
         if ($first_index_file) {
             // 0: Check if a subdirsCache containing 'duplicate' entries with
             //    varying case, works OK: re-case two layers of subdirectories,
@@ -1167,6 +1161,7 @@ class FileIndexerTest extends TestCase
         //     two layers deep missing directory. (There are warnings about
         //     'two' directories now because we just display every casing of
         //     a missing directory that is found in the database.)
+        $nonexistent_subdirs = $this->getNonexistentSubdirsInMessage(basename($old_subdir), $old_subdir_differently_indexed, $indexer);
         $this->indexAndAssert($indexer, ["$work_dir/$reindex_base"], $database_contents, [
             "warning: Indexed records exist for files in the following nonexistent subdirectories of directory '$old_sub_base': $nonexistent_subdirs.",
         ]);
@@ -1175,14 +1170,8 @@ class FileIndexerTest extends TestCase
         //     directory whose first level we can remove. Remove it; see if the
         //     query still picks up the records which are now in a two layers
         //     deep missing directory.
-        $nonexistent_subdirs = basename($old_sub_base);
-        // $nonexistent_subdirs is usually like 'cc') but can also be 'cC, cc'.
-        if ($old_basedir_differently_indexed) {
-            $dirs = [$nonexistent_subdirs, $old_basedir_differently_indexed];
-            sort($dirs);
-            $nonexistent_subdirs = implode(', ', $dirs);
-        }
         rmdir("$work_dir/$old_sub_base");
+        $nonexistent_subdirs = $this->getNonexistentSubdirsInMessage(basename($old_sub_base), $old_basedir_differently_indexed, $indexer);
         $this->indexAndAssert($indexer, ["$work_dir/$reindex_base"], $database_contents, [
             "warning: Indexed records exist for files in the following nonexistent subdirectories of directory '$reindex_base': $nonexistent_subdirs.",
         ]);
@@ -1230,6 +1219,48 @@ class FileIndexerTest extends TestCase
         ]);
 
         return $database_contents;
+    }
+
+    /**
+     * Derive the exact 'nonexistent subdirs' displayed in a warning message.
+     *
+     * This can differ based on case sensitivity settings. The logic in this
+     * method is a little bit contrived but that shouldn't matter veruy much
+     * for tests; it only governs the exact error message displayed. It has
+     * nothing to do with whether certain records were handled (in)correctly.
+     *
+     * @param string $nonexistent_dir
+     *   The name of a directory that doesn't exist anymore
+     * @param string $old_dir_differently_indexed
+     *   Other casings of the same name that might also be displayed as part of
+     *   the warning message.
+     * @param FileIndexer $indexer
+     *
+     * @return string
+     */
+    private function getNonexistentSubdirsInMessage($nonexistent_dir, $old_dir_differently_indexed, $indexer)
+    {
+        if ($old_dir_differently_indexed) {
+            // $nonexistent_dir is usually like 'cc' but can also be like
+            // 'cC, cc'. This depends on whether the SELECT DISTINCT statement
+            // which populates FileIndexer::$subdirsCache is case sensitive
+            // (i.e. whether values of varying casing roll up into one). That
+            // happens for mysql but not for sqlite; that is always case
+            // sensitive.
+            $driver = $indexer->getConfig('pdo')->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (empty($indexer->getConfig('case_insensitive_database')) || $driver === 'sqlite') {
+                $dirs = [$nonexistent_dir, $old_dir_differently_indexed];
+                sort($dirs);
+                $nonexistent_dir = implode(', ', $dirs);
+            } elseif ($old_dir_differently_indexed < $nonexistent_dir) {
+                // If SELECT DISTINCT is indeed case sensitive, it seems like
+                // it's always the 'smallest' value that occurs in the result.
+                // (We haven't really tested.)
+                $nonexistent_dir = $old_dir_differently_indexed;
+            }
+        }
+
+        return $nonexistent_dir;
     }
 
     /**
@@ -1600,8 +1631,12 @@ class FileIndexerTest extends TestCase
         // This is usually an in-memory database; we don't remove the file
         // afterwards.
         if (empty($this->pdo_connection)) {
-            if (!empty($_ENV['FILE_INDEXER_TEST_DB_FILE'])) {
-                $this->pdo_connection = new PDO('sqlite:' . tempnam('/tmp', 'fileindexertestdb'));
+            if (!empty($_ENV['FILE_INDEXER_TEST_PDO_DSN'])) {
+                $this->pdo_connection = new PDO(
+                    $_ENV['FILE_INDEXER_TEST_PDO_DSN'],
+                    !empty($_ENV['FILE_INDEXER_TEST_PDO_USER']) ? $_ENV['FILE_INDEXER_TEST_PDO_USER'] : null,
+                    !empty($_ENV['FILE_INDEXER_TEST_PDO_PASS']) ? $_ENV['FILE_INDEXER_TEST_PDO_PASS'] : null
+                );
             } else {
                 $this->pdo_connection = new PDO('sqlite::memory:');
             }
@@ -1611,22 +1646,43 @@ class FileIndexerTest extends TestCase
         // also if $this->pdo_connection did not exist yet), so always try to
         // drop the table.
         $this->pdo_connection->exec('DROP TABLE file');
-        $sensitivity = $case_insensitive ? ' COLLATE NOCASE' : '';
-        $this->pdo_connection->exec("CREATE TABLE IF NOT EXISTS file (
-          fid            INTEGER PRIMARY KEY,
-          dir            TEXT    NOT NULL$sensitivity,
-          filename       TEXT    NOT NULL$sensitivity,
-          sha1           TEXT    NOT NULL,
-          UNIQUE (dir, filename) ON CONFLICT ABORT);");
-        $this->pdo_connection->exec('CREATE INDEX sha1 ON file (sha1)');
+        switch ($this->pdo_connection->getAttribute(PDO::ATTR_DRIVER_NAME)) {
+            // Note the below are not the full set of recommended indexes
+            // during production operation; this depends on your application.
+            // The SQL queries in FileIndexer ideally also need an index on
+            // just `dir`, but the number of rows is so low we don't care for
+            // the test.
+            case 'sqlite':
+                $sensitivity = $case_insensitive ? ' COLLATE NOCASE' : '';
+                $ret = $this->pdo_connection->exec("CREATE TABLE file (
+                  fid            INTEGER PRIMARY KEY,
+                  dir            TEXT    NOT NULL$sensitivity,
+                  filename       TEXT    NOT NULL$sensitivity,
+                  sha1           TEXT    NOT NULL,
+                  UNIQUE (dir, filename) ON CONFLICT ABORT);");
+                $ret = $this->pdo_connection->exec('CREATE INDEX sha1 ON file (sha1)');
 
-        // In SQLite we need to set case sensitive behavior of LIKE
-        // globally (which is off by default apparently).
-        if (!$case_insensitive && !$for_case_insensitive_fs) {
-            $this->pdo_connection->exec('PRAGMA case_sensitive_like=ON');
-        } else {
-            // Better be sure it didn't stay case sensitive from last time.
-            $this->pdo_connection->exec('PRAGMA case_sensitive_like=OFF');
+                // In SQLite we need to set case sensitive behavior of LIKE
+                // globally(which is off by default apparently).
+                if (!$case_insensitive && !$for_case_insensitive_fs) {
+                    $this->pdo_connection->exec('PRAGMA case_sensitive_like=ON');
+                } else {
+                    // Better be sure it didn't stay case sensitive from last time.
+                    $this->pdo_connection->exec('PRAGMA case_sensitive_like=OFF');
+                }
+                break;
+
+            // mysql
+            default:
+                $collate = $case_insensitive ? 'utf8_general_ci' : 'utf8_bin';
+                $ret = $this->pdo_connection->exec("CREATE TABLE `file` (
+                  `fid`      int(11)      NOT NULL AUTO_INCREMENT,
+                  `dir`      varchar(255) NOT NULL,
+                  `filename` varchar(255) NOT NULL,
+                  `sha1`     varchar(255) NOT NULL,
+                  PRIMARY KEY (`fid`),
+                  UNIQUE KEY `dir_file` (`dir`,`filename`)
+                  ) COLLATE $collate");
         }
     }
 

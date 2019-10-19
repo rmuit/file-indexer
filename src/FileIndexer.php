@@ -29,22 +29,17 @@ use stdClass;
  * possible:
  * - Case insensitive databases _generally_ cause no issues; case of indexed
  *   records doesn't need to match with file / directory names on the file
- *   system... as long as the database recognizes the case of all characters,
- *   including non-ASCII; matches '=' / 'IN' / 'LIKE' operations in a case
- *   insensitive manner; and does not allow any kinds of duplicate entries with
- *   differing cases. I'm not 100% sure of the state of this on all database
- *   systems. On SQLite without a certain extension installed, 'LIKE' will not
- *   match non-ASCII characters of various case properly. This will cause
- *   issues when case of characters in directory names on the file system does
- *   not match the case in the 'dir' field in database records, or when the
- *   case of 'dir' fields in various database records is different.
+ *   system. (This is of course assuming that the database handles case
+ *   insensitive matching of the stored directory/file names properly.) The
+ *   tricky part is LIKE operations, which match case differently depending on
+ *   database type / setup; this class should deal with them correctly.
  * - With case insensitive database and case sensitive file system, if a full
  *   directory is processed and contains multiple files which can only be
  *   represented by one database record, a warning is issued and the second
  *   file is skipped. If those
  * - With case sensitive database and case insensitive file system:
  *   - We depend on a case insensitive 'LIKE' operation being truly case
- *     insensitive. See above.
+ *     insensitive, just like with case insensitive databases.
  *   - Case of indexed records doesn't need to match with file / directory
  *     names on the file system, as described above.
  *   - If multiple equivalent records are found in the database which
@@ -290,7 +285,7 @@ class FileIndexer extends SubpathProcessor
 
             // We'll also store the dir inside the record, to remember the case as
             // stored in the db (which the cache key has lost).
-            $dir_sql_expr = $this->modifySqlWhereExpr('dir');
+            $dir_sql_expr = $this->dbModifySqlExpressionCase('dir');
             $qr = $this->dbFetchAll('SELECT fid, dir, filename, ' . implode(', ', $this->config['cache_fields'])
                 . " FROM {$this->config['table']} WHERE $dir_sql_expr = :d", [':d' => $key_dir]);
             $dir = $this->getPathRelativeToAllowedBase($directory);
@@ -321,7 +316,7 @@ class FileIndexer extends SubpathProcessor
         if ($key_dir) {
             $query = "SELECT DISTINCT CASE WHEN INSTR(SUBSTR(dir, :ind), '/') > 0 
               THEN SUBSTR(dir, :ind, INSTR(SUBSTR(dir, :ind), '/') - 1) ELSE SUBSTR(dir, :ind) END as subdir
-              FROM {$this->config['table']} WHERE " . $this->dbLikeOperation('dir', ':dir');
+              FROM {$this->config['table']} WHERE " . $this->dbLikeOperation('dir', ':dir', true);
             $parameters = [
                 ':ind' => strlen($key_dir) + 2,
                 ':dir' => $this->dbEscapeLike("$key_dir/") . '%',
@@ -382,8 +377,8 @@ class FileIndexer extends SubpathProcessor
         $remove_cache = false;
         if (!isset($this->recordsCache[$key_dir])) {
             $remove_cache = true;
-            $dir_sql_expr = $this->modifySqlWhereExpr('dir');
-            $filename_expr = $this->modifySqlWhereExpr('filename');
+            $dir_sql_expr = $this->dbModifySqlExpressionCase('dir');
+            $filename_expr = $this->dbModifySqlExpressionCase('filename');
             // The 'dir' field only needs to be fetched in case of a case
             // insensitive file system, but we'll keep things uniform here.
             // Could change, though.
@@ -582,17 +577,11 @@ class FileIndexer extends SubpathProcessor
                 ]);
             }
             if ($remove) {
-                $filename_expr = 'filename';
-                $nonexistent_files_arg = $nonexistent_files;
-                // Same logic as modifySqlWhereExpr() but we need more changes
-                // than just the SQL expression.
-                if (!empty($this->config['case_insensitive_filesystem']) && empty($this->config['case_insensitive_database'])) {
-                    $filename_expr = 'LOWER(filename)';
-                    $nonexistent_files_arg = array_map(function ($f) {
-                        return strtolower($f);
-                    }, $nonexistent_files);
-                }
-                $dir_sql_expr = $this->modifySqlWhereExpr('dir');
+                $filename_expr = $this->dbModifySqlExpressionCase('filename');
+                $nonexistent_files_arg = array_map(function ($f) {
+                    return $this->dbModifySqlExpressionCase($f, true);
+                }, $nonexistent_files);
+                $dir_sql_expr = $this->dbModifySqlExpressionCase('dir');
                 $query_data = $this->dbCreateQueryParams($nonexistent_files_arg);
                 $deleted = $this->dbExecuteQuery(
                     "DELETE FROM {$this->config['table']} WHERE $dir_sql_expr = :d AND $filename_expr IN ("
@@ -668,7 +657,7 @@ class FileIndexer extends SubpathProcessor
                 ]);
             }
             if ($remove) {
-                // $nonexistent_dirs can contain values with any casing
+                // $nonexistent_dirs can contain values with any case
                 // -however they appear in the database- so if the database or
                 // file system is case insensitive, those refer to the same
                 // directory. For case insensitive databases, one DELETE query
@@ -683,19 +672,15 @@ class FileIndexer extends SubpathProcessor
                 // databases (SQLite) don't like varying LIKE operations, we'll
                 // just match all cases in one query.
                 $seen = [];
-                $dir_sql_expr = $this->modifySqlWhereExpr('dir');
+                $dir_sql_expr = $this->dbModifySqlExpressionCase('dir');
                 foreach ($nonexistent_dirs as $dir) {
                     if ($this->caseInsensitiveFileRecordMatching() && isset($seen[strtolower($dir)])) {
                         continue;
                     }
 
-                    $dir_arg = $this->concatenateRelativePath($key_dir, $dir);
-                    if (!empty($this->config['case_insensitive_filesystem']) && empty($this->config['case_insensitive_database'])) {
-                        // See comment above. Equalize with $dir_sql_expr.
-                        $dir_arg = strtolower($dir_arg);
-                    }
+                    $dir_arg = $this->dbModifySqlExpressionCase($this->concatenateRelativePath($key_dir, $dir), true);
                     $deleted = $this->dbExecuteQuery("DELETE FROM {$this->config['table']} WHERE $dir_sql_expr = :thisdir OR "
-                        . $this->dbLikeOperation('dir', ':subdir'), [
+                        . $this->dbLikeOperation('dir', ':subdir', true), [
                             ':thisdir' => $dir_arg,
                             ':subdir' => $this->dbEscapeLike("$dir_arg/") . '%',
                         ]);
@@ -777,7 +762,7 @@ class FileIndexer extends SubpathProcessor
                 ]);
             }
             if ($remove) {
-                // $nonexistent_dirs can contain values with any casing
+                // $dirs_which_are_files can contain values with any casing
                 // -however they appear in the database- so if the database or
                 // file system is case insensitive, those refer to the same
                 // directory. For case insensitive databases, one DELETE query
@@ -792,10 +777,10 @@ class FileIndexer extends SubpathProcessor
                 // databases (SQLite) don't like varying LIKE operations, we'll
                 // just match all cases in one query.
                 $key_file = $this->modifyCacheKey(reset($dirs_which_are_files));
-                $dir_sql_expr = $this->modifySqlWhereExpr('dir');
+                $dir_sql_expr = $this->dbModifySqlExpressionCase('dir');
                 $dir_arg =  $this->concatenateRelativePath($key_dir, $key_file);
                 $deleted = $this->dbExecuteQuery("DELETE FROM {$this->config['table']} WHERE $dir_sql_expr = :thisdir OR "
-                    . $this->dbLikeOperation('dir', ':subdir'), [
+                    . $this->dbLikeOperation('dir', ':subdir', true), [
                         ':thisdir' => $dir_arg,
                         ':subdir' => $this->dbEscapeLike("$dir_arg/") . '%',
                     ]);
@@ -860,8 +845,8 @@ class FileIndexer extends SubpathProcessor
                 ]);
             }
             if ($remove) {
-                $dir_sql_expr = $this->modifySqlWhereExpr('dir');
-                $filename_expr = $this->modifySqlWhereExpr('filename');
+                $dir_sql_expr = $this->dbModifySqlExpressionCase('dir');
+                $filename_expr = $this->dbModifySqlExpressionCase('filename');
                 $deleted = $this->dbExecuteQuery("DELETE FROM {$this->config['table']} WHERE $dir_sql_expr = :d AND $filename_expr = :file", [
                     ':d' => $key_dir,
                     ':file' => $key_file
@@ -930,30 +915,6 @@ class FileIndexer extends SubpathProcessor
             $key = strtolower($key);
         }
         return $key;
-    }
-
-    /**
-     * Gets SQL expression to use for a field in WHERE clauses.
-     *
-     * To be sure we get all needed records from the database, we need to
-     * change the WHERE expression if we have a case sensitive database but
-     * want to match any casing because of a case insensitive file system.
-     * (Case insensitive databases presumably already return all casings.)
-     *
-     * We likely never need this for LIKE operations; see dbLikeOperation().
-     *
-     * @param string $field
-     *   The field name: 'dir' or 'filename'.
-     *
-     * @return string
-     *   The field name, possibly modified.
-     */
-    protected function modifySqlWhereExpr($field)
-    {
-        if (!empty($this->config['case_insensitive_filesystem']) && empty($this->config['case_insensitive_database'])) {
-            $field = "LOWER($field)";
-        }
-        return $field;
     }
 
     /**
@@ -1305,17 +1266,54 @@ class FileIndexer extends SubpathProcessor
     }
 
     /**
+     * Gets SQL expression to use for a field or literal string expression.
+     *
+     * To be sure we get all needed records from the database, we need to
+     * change the WHERE expression if we have a case sensitive database but
+     * want to match any casing because of a case insensitive file system.
+     * (Case insensitive databases presumably already return all casings.)
+     *
+     * @param string $field
+     *   The field name: 'dir' or 'filename' - except if $literal_string.
+     * @param bool $literal_string
+     *   If true, this is a literal string expression.
+     *
+     * @return string
+     *   The field name, possibly modified.
+     */
+    protected function dbModifySqlExpressionCase($field, $literal_string = false)
+    {
+        if (!empty($this->config['case_insensitive_filesystem']) && empty($this->config['case_insensitive_database'])) {
+            switch ($this->config['pdo']->getAttribute(PDO::ATTR_DRIVER_NAME)) {
+                case 'sqlite':
+                    if ($literal_string) {
+                        $field = strtolower($field);
+                    } else {
+                        $field = "LOWER($field)";
+                    }
+                    break;
+
+                // mysql
+                default:
+                    // LOWER($left) would also work, provided the right hand
+                    // side expression is always lowercase. We just choose to
+                    // change the comparison rather than the operands.
+                    if (!$literal_string) {
+                        $field = "$field COLLATE utf8_general_ci";
+                    }
+            }
+        }
+
+        return $field;
+    }
+
+    /**
      * Renders a LIKE operation that takes into account case sensitive systems.
      *
-     * It's used for constructing LIKE operation on the directory field;
-     * these need to be case sensitive if both file system and database are
-     * case sensitive, so we don't wrongly match records. In other cases
-     * they need to be case insensitive. (Note: also if file system is case
-     * sensitive and database is not; then two files with different case are
-     * disallowed.)
-     *
-     * This is encoded in a separate method because database systems have
-     * different defaults for case sensitivity and for changing it.
+     * This is used for constructing LIKE operations for the directory field,
+     * but since this looks like a very generic method name we introduce a
+     * third parameter to make surer noone will call this without thinking
+     * about it.
      *
      * NOTE: SQLite works in a way which doesn't need a modified method/code
      * here; instead, the caller should set 'case sensitive like' with a PRAGMA
@@ -1328,13 +1326,45 @@ class FileIndexer extends SubpathProcessor
      * @param string $right
      *   The 'right hand operand' of the 'LIKE'. Either a placeholder or a
      *   literal expression (already escaped, including quotes and wildcard(s)).
+     * @param bool $left_is_file_column
+     *   This signifies that we're comparing a column in the 'file' table, so
+     *   we might change the expression according to case sensitivity settings.
+     *   We also assume the right hand side is a literal string.
      *
      * @return string
      *   The LIKE clause.
      */
-    protected function dbLikeOperation($left, $right)
+    protected function dbLikeOperation($left, $right, $left_is_file_column)
     {
-        return  "$left LIKE $right";
+        switch ($this->config['pdo']->getAttribute(PDO::ATTR_DRIVER_NAME)) {
+            case 'sqlite':
+                // See phpDoc; SQLite LIKE statements need different tweaking.
+                return "$left LIKE $right";
+
+            // mysql
+            default:
+                // Case sensitivity depends on the collation of the operands;
+                // if any of them is a binary string, the comparison is
+                // case sensitive (though the default for comparison is case
+                // insensitive). When $left_is_file_column, we are assuming
+                // the right hand side has no collation so the comparison
+                // follows the collation of the left hand column, which works
+                // if the database/column is case insensitive or if both
+                // database and file system are case sensitive.
+                if (
+                    !empty($this->config['case_insensitive_filesystem'])
+                    && empty($this->config['case_insensitive_database'])
+                    && $left_is_file_column
+                ) {
+                    // In this case, we want to force this comparison to be
+                    // case insensitive. We can do this by making sure both
+                    // sides are lowercase: change $left to LOWER($left) and
+                    // make sure $right is a lowercase string. Or by explicitly
+                    // assigning a case insensitive collation to $left.
+                    return "$left COLLATE utf8_general_ci LIKE $right";
+                }
+                return "$left LIKE $right";
+        }
         // Mysql is case insensitive by default; for a case sensitive clause,
         // we need to render '<left> LIKE BINARY <right>'.
         // PostgreSQL is case sensitive by default; for a case insensitive
