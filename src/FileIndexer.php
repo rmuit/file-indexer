@@ -317,9 +317,11 @@ class FileIndexer extends SubpathProcessor
         // means the index is length(dir)+2. Note we can't just filter out any
         // sub-subdirectories in the WHERE clause, because that would not find
         // subdirectories with no files and only sub-subdirs.
+        $instr = $this->config['pdo']->getAttribute(PDO::ATTR_DRIVER_NAME) === 'pgsql'
+            ? 'STRPOS' : 'INSTR';
         if ($key_dir) {
-            $query = "SELECT DISTINCT CASE WHEN INSTR(SUBSTR(dir, :ind), '/') > 0 
-              THEN SUBSTR(dir, :ind, INSTR(SUBSTR(dir, :ind), '/') - 1) ELSE SUBSTR(dir, :ind) END as subdir
+            $query = "SELECT DISTINCT CASE WHEN $instr(SUBSTR(dir, :ind), '/') > 0
+              THEN SUBSTR(dir, :ind, $instr(SUBSTR(dir, :ind), '/') - 1) ELSE SUBSTR(dir, :ind) END as subdir
               FROM {$this->config['table']} WHERE " . $this->dbLikeOperation('dir', ':dir', true);
             $parameters = [
                 ':ind' => strlen($key_dir) + 2,
@@ -333,8 +335,8 @@ class FileIndexer extends SubpathProcessor
             //  FROM {$this->config['table']} WHERE $dir_sql_expr LIKE :dir";
             //$parameters[':slashes'] = substr_count($key_dir, '/') + 1;
         } else {
-            $query = "SELECT DISTINCT CASE WHEN INSTR(dir, '/') > 0 
-              THEN SUBSTR(dir, 1, INSTR(dir, '/') - 1) ELSE dir END as subdir
+            $query = "SELECT DISTINCT CASE WHEN $instr(dir, '/') > 0
+              THEN SUBSTR(dir, 1, $instr(dir, '/') - 1) ELSE dir END as subdir
               FROM {$this->config['table']} WHERE dir <> ''";
             $parameters = [];
         }
@@ -1194,8 +1196,8 @@ class FileIndexer extends SubpathProcessor
         }
         $ret = $statement->execute($parameters);
         if (!$ret) {
-            // This is very unexpected; no details logged so far.
-            throw new RuntimeException('Database statement execution failed.');
+            $info = $statement->errorInfo();
+            throw new RuntimeException("Database statement execution failed: Driver code $info[1], SQL code $info[0]: $info[2]");
         }
         $ret = $statement->fetchAll(PDO::FETCH_CLASS);
         if (isset($key)) {
@@ -1292,6 +1294,7 @@ class FileIndexer extends SubpathProcessor
         if (!empty($this->config['case_insensitive_filesystem']) && empty($this->config['case_insensitive_database'])) {
             switch ($this->config['pdo']->getAttribute(PDO::ATTR_DRIVER_NAME)) {
                 case 'sqlite':
+                case 'pgsql':
                     if ($literal_string) {
                         $field = strtolower($field);
                     } else {
@@ -1345,6 +1348,12 @@ class FileIndexer extends SubpathProcessor
         switch ($this->config['pdo']->getAttribute(PDO::ATTR_DRIVER_NAME)) {
             case 'sqlite':
                 // See phpDoc; SQLite LIKE statements need different tweaking.
+                return "$left LIKE $right";
+
+            case 'pgsql':
+                if (!empty($this->config['case_insensitive_filesystem']) && empty($this->config['case_insensitive_database'])) {
+                    return "$left ILIKE $right";
+                }
                 return "$left LIKE $right";
 
             // mysql

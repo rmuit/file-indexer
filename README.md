@@ -1,9 +1,9 @@
 # PathProcessor / FileIndexer             [![Build Status](https://api.travis-ci.com/rmuit/file-indexer.svg?branch=master)](https://travis-ci.com/rmuit/file-indexer)
 
-PathProcessor is a base class that allows iterating recursively through files
-and subdirectories, and performs an action on them. The action in PathProcessor
-is 'nothing' (because its processFile() definition is empty) and can be defined
-by subclasses.
+PathProcessor is a base class for your PHP application, that allows iterating
+recursively through files and subdirectories, and performs an action on them.
+The action in PathProcessor is 'nothing' (because its processFile() definition
+is empty) and can be defined by subclasses.
 
 See the code of PathProcessor and SubpathProcessor, and see PathRemover for a
 simple example. For several configuration settings (like whether symlinks are

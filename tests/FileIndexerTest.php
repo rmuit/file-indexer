@@ -1668,13 +1668,13 @@ class FileIndexerTest extends TestCase
             // the test.
             case 'sqlite':
                 $sensitivity = $case_insensitive ? ' COLLATE NOCASE' : '';
-                $ret = $this->pdo_connection->exec("CREATE TABLE file (
+                $this->pdo_connection->exec("CREATE TABLE file (
                   fid            INTEGER PRIMARY KEY,
                   dir            TEXT    NOT NULL$sensitivity,
                   filename       TEXT    NOT NULL$sensitivity,
                   sha1           TEXT    NOT NULL,
                   UNIQUE (dir, filename) ON CONFLICT ABORT);");
-                $ret = $this->pdo_connection->exec('CREATE INDEX sha1 ON file (sha1)');
+                $this->pdo_connection->exec('CREATE INDEX sha1 ON file (sha1)');
 
                 // In SQLite we need to set case sensitive behavior of LIKE
                 // globally(which is off by default apparently).
@@ -1686,16 +1686,37 @@ class FileIndexerTest extends TestCase
                 }
                 break;
 
+            case 'pgsql':
+                // Postgres has no standard way to enforce case sensitivity;
+                // specifically, it doesn't enforce that through collations.
+                // The usual ways are to 1) adjust SQL to be able to work with
+                // case sensitive databases (which FileIndexer already does);
+                // 2) use CITEXT for a data type, after installing the citext
+                // module. If someone ever needs this, they can add CITEXT to
+                // the below SQL because it will just mean the tests still fail
+                // for people not having the citext module - just like now.
+                if ($case_insensitive) {
+                    throw new RuntimeException('Unit tests are not extended to test case sensitive PostgreSQL databases. ');
+                }
+                $this->pdo_connection->exec("CREATE TABLE file (
+                   fid      serial PRIMARY KEY,
+                   dir      VARCHAR (255) NOT NULL,
+                   filename VARCHAR (255) NOT NULL,
+                   sha1     VARCHAR (40) NOT NULL,
+                   UNIQUE (dir, filename)
+                )");
+                break;
+
             // mysql
             default:
                 $collate = $case_insensitive ? 'utf8_general_ci' : 'utf8_bin';
-                $ret = $this->pdo_connection->exec("CREATE TABLE `file` (
+                $this->pdo_connection->exec("CREATE TABLE `file` (
                   `fid`      int(11)      NOT NULL AUTO_INCREMENT,
                   `dir`      varchar(255) NOT NULL,
                   `filename` varchar(255) NOT NULL,
-                  `sha1`     varchar(255) NOT NULL,
+                  `sha1`     varchar(40)  NOT NULL,
                   PRIMARY KEY (`fid`),
-                  UNIQUE KEY `dir_file` (`dir`,`filename`)
+                  UNIQUE KEY `dir_file` (`dir`, `filename`)
                   ) COLLATE $collate");
         }
     }
