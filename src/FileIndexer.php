@@ -11,19 +11,15 @@ use stdClass;
 /**
  * PathProcessor that indexes files and saves indexed values to the database.
  *
- * 'Indexed values' is the SHA1 value by default, but this can be overridden.
+ * 'Indexed values' is the SHA256 value by default, but this can be overridden.
  *
  * Indexed records are saved in columns 'dir' and 'filename' in a table called
- * 'file'. The 'dir' value is a subdir of the allowed_base_directory setting as
- * implemented by SubpathProcessor; '' (not NULL) for files in the 'allowed
+ * (by default) 'file'. 'dir' is a subdir of the allowed_base_directory setting
+ * as implemented by SubpathProcessor; '' (not NULL) for files in the 'allowed
  * base root'. (To reiterate: this could be different from the 'base_directory'
  * setting which governs how relative paths for the input parameter of
  * processPaths() are resolved, which is optional, not set by default, and not
  * used by this class.)
- *
- * This class works on a PDO database connection passed into the constructor as
- * $config['pdo']. If that isn't passed in, processPaths() will throw a fatal
- * error at a semi random place in its call tree.
  *
  * Case sensitivity of file system vs database is dealt with, as well as
  * possible:
@@ -62,6 +58,13 @@ use stdClass;
  * it out into backend specific classes, for simplicity. So the way to change
  * something is to extend this class and override those methods, which have no
  * official interface. It's not the most flexible way, but it'll do.
+ *
+ * This class works on a PDO database connection passed into the constructor as
+ * $config['pdo']. If that isn't passed in, processPaths() will throw a fatal
+ * error at a semi random place in its call tree. It's not strictly required to
+ * pass into the constructor, so that child classes can implement database
+ * specific methods that don't use PDO. ($config['pdo'] is only used inside
+ * those methods.)
  */
 class FileIndexer extends SubpathProcessor
 {
@@ -317,8 +320,7 @@ class FileIndexer extends SubpathProcessor
         // means the index is length(dir)+2. Note we can't just filter out any
         // sub-subdirectories in the WHERE clause, because that would not find
         // subdirectories with no files and only sub-subdirs.
-        $instr = $this->config['pdo']->getAttribute(PDO::ATTR_DRIVER_NAME) === 'pgsql'
-            ? 'STRPOS' : 'INSTR';
+        $instr = $this->getDatabaseType() === 'pgsql' ? 'STRPOS' : 'INSTR';
         if ($key_dir) {
             $query = "SELECT DISTINCT CASE WHEN $instr(SUBSTR(dir, :ind), '/') > 0
               THEN SUBSTR(dir, :ind, $instr(SUBSTR(dir, :ind), '/') - 1) ELSE SUBSTR(dir, :ind) END as subdir
@@ -1116,6 +1118,18 @@ class FileIndexer extends SubpathProcessor
     /// Database specific and action specific methods.
 
     /**
+     * Gets the database type.
+     *
+     * @return string
+     *   A type name equal to the PDO driver name, e.g. 'mysql', 'pgsql',
+     *   'sqlite'.
+     */
+    protected function getDatabaseType()
+    {
+        return $this->config['pdo']->getAttribute(PDO::ATTR_DRIVER_NAME);
+    }
+
+    /**
      * Executes a non-select query.
      *
      * @param string $query
@@ -1292,7 +1306,7 @@ class FileIndexer extends SubpathProcessor
     protected function dbModifySqlExpressionCase($field, $literal_string = false)
     {
         if (!empty($this->config['case_insensitive_filesystem']) && empty($this->config['case_insensitive_database'])) {
-            switch ($this->config['pdo']->getAttribute(PDO::ATTR_DRIVER_NAME)) {
+            switch ($this->getDatabaseType()) {
                 case 'sqlite':
                 case 'pgsql':
                     if ($literal_string) {
@@ -1345,7 +1359,7 @@ class FileIndexer extends SubpathProcessor
      */
     protected function dbLikeOperation($left, $right, $left_is_file_column)
     {
-        switch ($this->config['pdo']->getAttribute(PDO::ATTR_DRIVER_NAME)) {
+        switch ($this->getDatabaseType()) {
             case 'sqlite':
                 // See phpDoc; SQLite LIKE statements need different tweaking.
                 return "$left LIKE $right";
