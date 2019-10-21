@@ -1031,6 +1031,8 @@ class FileIndexer extends SubpathProcessor
         return $cached_values && $record->$field_name === $cached_values->$field_name;
     }
 
+    /// Database specific and action specific methods.
+
     /**
      * Updates or inserts record into the database. Logs errors.
      *
@@ -1106,27 +1108,12 @@ class FileIndexer extends SubpathProcessor
                     $this->getLogger()->error('Unexpected return value from insert query: {result}.', ['result' => $this->varToString($result)]);
                 }
             } catch (RuntimeException $e) {
-                // We have no specific exception message to log; the caller
-                // will also log. So just continue here.
+                $this->getLogger()->error('Failed to insert record: {error}.', ['error' => $e->getMessage()]);
                 $ret = false;
             }
         }
 
         return $ret;
-    }
-
-    /// Database specific and action specific methods.
-
-    /**
-     * Gets the database type.
-     *
-     * @return string
-     *   A type name equal to the PDO driver name, e.g. 'mysql', 'pgsql',
-     *   'sqlite'.
-     */
-    protected function getDatabaseType()
-    {
-        return $this->config['pdo']->getAttribute(PDO::ATTR_DRIVER_NAME);
     }
 
     /**
@@ -1152,25 +1139,13 @@ class FileIndexer extends SubpathProcessor
      */
     protected function dbExecuteQuery($query, $parameters = [], $special_handling = 0)
     {
-        /** @var \PDO $pdo */
-        $pdo = $this->config['pdo'];
-        $statement = $pdo->prepare($query);
-        if (!$statement) {
-            // This is very unexpected; no details logged so far.
-            throw new LogicException('Database statement execution failed.');
-        }
-        $ret = $statement->execute($parameters);
-        if (!$ret) {
-            // Some queries could fail if case sensitivity settings are
-            // incorrect; callers should catch that and log hints if they want.
-            throw new RuntimeException('Database statement execution failed.');
-        }
+        $statement = $this->dbExecutePdoStatement($query, $parameters);
         $affected_rows = $statement->rowCount();
         if ($special_handling === 1) {
             if ($affected_rows !== 1) {
                 $this->getLogger()->error('Unexpected affected-rows count in insert statement: {affected_rows}.', ['affected_rows' => $affected_rows]);
             }
-            return $pdo->lastInsertId();
+            return $this->config['pdo']->lastInsertId();
         }
         return $affected_rows;
     }
@@ -1201,18 +1176,7 @@ class FileIndexer extends SubpathProcessor
      */
     protected function dbFetchAll($query, $parameters = [], $key = null)
     {
-        /** @var \PDO $pdo */
-        $pdo = $this->config['pdo'];
-        $statement = $pdo->prepare($query);
-        if (!$statement) {
-            // This is very unexpected; no details logged so far.
-            throw new RuntimeException('Database statement execution failed.');
-        }
-        $ret = $statement->execute($parameters);
-        if (!$ret) {
-            $info = $statement->errorInfo();
-            throw new RuntimeException("Database statement execution failed: Driver code $info[1], SQL code $info[0]: $info[2]");
-        }
+        $statement = $this->dbExecutePdoStatement($query, $parameters);
         $ret = $statement->fetchAll(PDO::FETCH_CLASS);
         if (isset($key)) {
             $result = [];
@@ -1241,19 +1205,39 @@ class FileIndexer extends SubpathProcessor
      */
     protected function dbFetchCol($query, $parameters = [], $index = 0)
     {
+        $statement = $this->dbExecutePdoStatement($query, $parameters);
+
+        return $statement->fetchAll(PDO::FETCH_COLUMN, $index);
+    }
+
+    /**
+     * Executes a PDO query/statement.
+     *
+     * @param string $query
+     *   Un-prepared query, with placeholders as can also be used for calling
+     *   PDO::prepare(), i.e. starting with a colon.
+     * @param array $parameters
+     *   Query parameters as could be used in PDOStatement::execute.
+     *
+     * @return \PDOStatement
+     *   Executed PDO statement.
+     */
+    protected function dbExecutePdoStatement($query, $parameters)
+    {
         /** @var \PDO $pdo */
         $pdo = $this->config['pdo'];
         $statement = $pdo->prepare($query);
         if (!$statement) {
-            // This is very unexpected; no details logged so far.
-            throw new RuntimeException('Database statement execution failed.');
+            $info = $statement->errorInfo();
+            throw new LogicException("Database statement execution failed: Driver code $info[1], SQL code $info[0]: $info[2]");
         }
         $ret = $statement->execute($parameters);
         if (!$ret) {
-            // This is very unexpected; no details logged so far.
-            throw new RuntimeException('Database statement execution failed.');
+            $info = $statement->errorInfo();
+            throw new RuntimeException("Database statement execution failed: Driver code $info[1], SQL code $info[0]: $info[2]");
         }
-        return $statement->fetchAll(PDO::FETCH_COLUMN, $index);
+
+        return $statement;
     }
 
     /**
@@ -1412,6 +1396,18 @@ class FileIndexer extends SubpathProcessor
     protected function dbEscapeLike($expression)
     {
         return addcslashes($expression, '\%_');
+    }
+
+    /**
+     * Gets the database type.
+     *
+     * @return string
+     *   A type name equal to the PDO driver name, e.g. 'mysql', 'pgsql',
+     *   'sqlite'.
+     */
+    protected function getDatabaseType()
+    {
+        return $this->config['pdo']->getAttribute(PDO::ATTR_DRIVER_NAME);
     }
 
     /// confirm() and related.
